@@ -6,7 +6,8 @@ const STEP = 1 / 120; // fixed physics step
 const MAX_STEPS = 8;
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
-const debug = new URLSearchParams(location.search).has('debug');
+// Debug tools: add ?debug or #debug to the URL.
+const debug = new URLSearchParams(location.search).has('debug') || location.hash === '#debug';
 
 let renderer: GooRenderer;
 try {
@@ -40,9 +41,9 @@ if (debug) {
   debugEl.id = 'debug';
   document.body.appendChild(debugEl);
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'g') body.mass += 1;
-    if (e.key === 'G') body.mass += 25;
-    if (e.key === 'r') body.mass = 0;
+    // Match physical keys so layout and Caps Lock don't matter.
+    if (e.code === 'KeyG') body.mass += e.shiftKey ? 25 : 1;
+    if (e.code === 'KeyR') body.mass = 0;
   });
 }
 
@@ -68,7 +69,7 @@ function frame(now: number): void {
   }
   if (steps === MAX_STEPS) acc = 0;
 
-  renderer.render(body.balls, body.bounds, body.radius, dpr);
+  renderer.render(body.balls, body.bounds, body.radius, body.finger, dpr);
 
   if (debugEl) {
     fpsFrames++;

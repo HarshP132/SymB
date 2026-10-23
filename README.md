@@ -12,4 +12,4 @@ npm run dev      # local dev server
 npm run build    # typecheck + production build into dist/
 ```
 
-Add `?debug` to the URL for an FPS readout. In debug mode, `g` grows SymB by 1 mass, `G` by 25, and `r` resets it.
+Add `?debug` (or `#debug`) to the URL for an FPS readout. In debug mode, `g` grows SymB by 1 mass, `G` by 25, and `r` resets it.

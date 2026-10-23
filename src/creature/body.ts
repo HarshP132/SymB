@@ -47,6 +47,9 @@ export class Body {
 
   private wanderSeed = Math.random() * 100;
 
+  /** Where the pointer carves into the goo; strength eases in and out. */
+  readonly finger = { x: 0, y: 0, r: 0, strength: 0 };
+
   constructor(x: number, y: number) {
     this.hx = x;
     this.hy = y;
@@ -140,16 +143,17 @@ export class Body {
         ay = (this.hy + oy * s - p.y) * p.k;
       }
 
-      // Pointer pokes dent the goo and drag it along.
+      // Pointer pokes push the goo aside and drag it along.
       if (input.active) {
         const dx = p.x - input.x;
         const dy = p.y - input.y;
         const d = Math.hypot(dx, dy) + 1e-3;
         if (d < pr) {
-          const push = (1 - d / pr) * (600 + Math.min(input.speed, 2500) * 0.6);
+          const near = 1 - d / pr;
+          const push = near * (1400 + Math.min(input.speed, 2500) * 1.2);
           ax += (dx / d) * push;
           ay += (dy / d) * push;
-          const drag = (1 - d / pr) * 4;
+          const drag = near * 10;
           ax += (input.vx - p.vx) * drag;
           ay += (input.vy - p.vy) * drag;
         }
@@ -159,9 +163,39 @@ export class Body {
       p.vy = (p.vy + ay * dt) * Math.exp(-dt * 6);
       p.x += p.vx * dt;
       p.y += p.vy * dt;
+
+      // The finger is solid: goo can't sit inside it, so it visibly dents.
+      if (input.active) {
+        const dx = p.x - input.x;
+        const dy = p.y - input.y;
+        const d = Math.hypot(dx, dy) + 1e-3;
+        const fr = this.fingerRadius + p.r * R * 0.5;
+        if (d < fr) {
+          const out = (fr - d) * 0.35;
+          p.x += (dx / d) * out;
+          p.y += (dy / d) * out;
+        }
+      }
     }
 
+    this.updateFinger(dt, input);
+
     this.collectBalls(R);
+  }
+
+  get fingerRadius(): number {
+    return this.radius * 0.45 + 6;
+  }
+
+  private updateFinger(dt: number, input: Input): void {
+    const f = this.finger;
+    const target = input.active ? 1 : 0;
+    f.strength += (target - f.strength) * Math.min(1, dt * 14);
+    if (input.active) {
+      f.x = input.x;
+      f.y = input.y;
+    }
+    f.r = this.fingerRadius;
   }
 
   private moveHeart(dt: number, t: number, input: Input, viewW: number, viewH: number): void {

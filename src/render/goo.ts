@@ -21,6 +21,7 @@ uniform int uCount;
 uniform vec4 uBalls[MAX_BALLS]; // xy center, z radius (css px)
 uniform vec4 uBounds;   // minX, minY, maxX, maxY (css px)
 uniform float uR;       // body radius (css px), for scale-free shading
+uniform vec4 uFinger;   // pointer dent: xy, radius, strength
 
 out vec4 outColor;
 
@@ -49,6 +50,12 @@ void main() {
       f += v;
       g -= 2.0 * v * d / dd; // gradient of r²/d²
     }
+    // The pointer carves a smooth, finite dent: f -= s·(1 - d²/S)².
+    vec2 fd = p - uFinger.xy;
+    float S = 4.0 * uFinger.z * uFinger.z;
+    float k = max(0.0, 1.0 - dot(fd, fd) / S);
+    f -= uFinger.w * 1.2 * k * k;
+    g += uFinger.w * 1.2 * 4.0 * k * fd / S;
   }
 
   // Soft ambient shadow so the goo sits *in* the void, not on top of it.
@@ -98,6 +105,7 @@ export class GooRenderer {
   private uBalls: WebGLUniformLocation | null;
   private uBounds: WebGLUniformLocation | null;
   private uR: WebGLUniformLocation | null;
+  private uFinger: WebGLUniformLocation | null;
   private ballData = new Float32Array(MAX_BALLS * 4);
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -128,12 +136,14 @@ export class GooRenderer {
     this.uBalls = gl.getUniformLocation(prog, 'uBalls');
     this.uBounds = gl.getUniformLocation(prog, 'uBounds');
     this.uR = gl.getUniformLocation(prog, 'uR');
+    this.uFinger = gl.getUniformLocation(prog, 'uFinger');
   }
 
   render(
     balls: readonly Ball[],
     bounds: { minX: number; minY: number; maxX: number; maxY: number },
     radius: number,
+    finger: { x: number; y: number; r: number; strength: number },
     dpr: number,
   ): void {
     const gl = this.gl;
@@ -151,6 +161,7 @@ export class GooRenderer {
     gl.uniform4fv(this.uBalls, this.ballData);
     gl.uniform4f(this.uBounds, bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
     gl.uniform1f(this.uR, radius);
+    gl.uniform4f(this.uFinger, finger.x, finger.y, finger.r, finger.strength);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }
