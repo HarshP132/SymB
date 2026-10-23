@@ -171,7 +171,7 @@ Each milestone ends with something you can open in a browser and react to before
 |---|---|
 | Name | **SymB** (default) |
 | Sound | Procedural audio, **muted by default** (default) |
-| Pacing | ~60–90 min cumulative play to Super Friendly (default, tunable) |
+| Pacing | ~20–30 min cumulative play to Super Friendly (tuned up from 60–90) |
 | Regression | Gentle decay, never more than half a stage (default) |
 | Size | **Grows forever**: no cap. The camera zooms out logarithmically, and the dust/parallax layers rescale so the void keeps conveying scale. |
 | Platform | **Desktop and touch, equal priority**: every interaction has a touch equivalent, performance is budgeted for mid-range phones, and there is no hover-only behaviour. |

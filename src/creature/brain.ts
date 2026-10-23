@@ -33,16 +33,16 @@ const REST = [4, 2.6, 1.6, 1.3, 1.1];
 /** How much fast movement nearby frightens it, per stage. */
 const SKITTISH = [1, 0.7, 0.4, 0.25, 0.15];
 
-// Pacing: roughly 60-90 minutes of play from Shy to Super friendly.
-const BOND_PER_MIN_TOGETHER = 0.25;
+// Pacing: roughly 20-30 minutes of play from Shy to Super friendly.
+const BOND_PER_MIN_TOGETHER = 0.8;
 /** Extra bond for holding still near it while it's shy. */
-const BOND_PER_MIN_TRUST = 0.6;
-const BOND_PER_CATCH = 0.35;
+const BOND_PER_MIN_TRUST = 2;
+const BOND_PER_CATCH = 1.2;
 const BOND_PER_STARTLE = -0.25;
-const BOND_PER_MIN_PETTING = 1.2;
-const BOND_PER_MIN_HUGGING = 1.5;
-const BOND_PER_TICKLE = 0.1;
-const BOND_PER_MEAL = 0.15;
+const BOND_PER_MIN_PETTING = 4;
+const BOND_PER_MIN_HUGGING = 5;
+const BOND_PER_TICKLE = 0.4;
+const BOND_PER_MEAL = 0.6;
 /** Bond lost per hour away; never more than half the current stage. */
 const BOND_DECAY_PER_HOUR = 0.25;
 /** Hold a press on SymB this long for a hug (or a squirm), s. */
@@ -84,6 +84,11 @@ export class Brain {
   private touching = false;
   private asleep = false;
   private moment: { stage: number; left: number } | null = null;
+  // Little idle habits that keep it looking alive between games.
+  private fidgetWait = 3;
+  private wiggle = 0;
+  private glance: { x: number; y: number; until: number } | null = null;
+  private blissful = false;
   // Where and when the cursor was last seen, for waiting by the door.
   private lastSeen = { x: 0, y: 0 };
   private leftAt = 0;
@@ -150,6 +155,8 @@ export class Brain {
     this.hopWait = Math.max(0, this.hopWait - dt);
     this.greet = Math.max(0, this.greet - dt);
     this.tickle = Math.max(0, this.tickle - dt);
+    this.fidgetWait = Math.max(0, this.fidgetWait - dt);
+    this.wiggle = Math.max(0, this.wiggle - dt);
     this.checkMilestone();
     if (this.moment && ptr.active) {
       this.moment.left -= dt;
@@ -164,12 +171,12 @@ export class Brain {
   /** Read what the cursor is doing on its body: petting, tickling, pressing. */
   private sense(dt: number, body: Body, ptr: Pointer): void {
     const R = body.radius;
-    const onBody = ptr.active && ptr.y < 0 && Math.hypot(ptr.x - body.hx, ptr.y - body.hy) < R * 1.7;
+    const onBody = ptr.active && ptr.y < 0 && Math.hypot(ptr.x - body.hx, ptr.y - body.hy) < R * 1.9;
     this.touching = onBody;
 
     // Petting: slow strokes across it, without pressing.
-    const stroking = onBody && !ptr.down && ptr.speed > 40 && ptr.speed < 650;
-    this.pet = Math.max(0, Math.min(1, this.pet + (stroking ? dt * 1.2 : -dt * 1.5)));
+    const stroking = onBody && !ptr.down && ptr.speed > 20 && ptr.speed < 900;
+    this.pet = Math.max(0, Math.min(1, this.pet + (stroking ? dt * 2.2 : -dt * 1.2)));
 
     // Tickling: the cursor keeps turning while it zips around on the body.
     if (onBody && ptr.speed > 150) {
@@ -270,6 +277,13 @@ export class Brain {
     const bliss = petted || this.hugging ? 1 : 0;
     m.content += (bliss - m.content) * Math.min(1, dt * (bliss ? 1.5 : 1));
     if (petted) this.bond += (dt * BOND_PER_MIN_PETTING) / 60;
+    // When a good petting session ends: a happy little shake.
+    if (m.content > 0.65) this.blissful = true;
+    if (this.blissful && m.content < 0.5) {
+      this.blissful = false;
+      this.wiggle = 0.7;
+      m.joy = Math.max(m.joy, 0.7);
+    }
     if (this.hugging) this.bond += (dt * BOND_PER_MIN_HUGGING) / 60;
     this.bond = Math.max(0, Math.min(100, this.bond));
     if (m.content > 0.5) m.fear *= Math.exp(-dt * 3);
@@ -302,6 +316,14 @@ export class Brain {
     it.sleep = m.sleepy > 0.8 ? 1 : 0;
     this.lookAt = null;
     this.choose(t, body, ptr, stillFor, pantry);
+    if (this.wiggle > 0) it.giggle = Math.max(it.giggle, 0.7);
+
+    // Nothing going on? Fidget.
+    const idle =
+      body.grounded && !body.engulfing && !it.reach && Math.abs(it.vx) < 40 &&
+      m.sleepy < 0.3 && m.content < 0.3 && m.fear < 0.3;
+    if (idle && this.fidgetWait === 0) this.fidget(t, body);
+    if (this.glance && t < this.glance.until) this.lookAt = this.glance;
     // Sleepy heads sink low.
     it.crouch = Math.max(it.crouch, m.sleepy * 0.35);
   }
@@ -311,7 +333,7 @@ export class Brain {
     const m = this.mood;
     const st = this.stage;
     const R = body.radius;
-    const maxSpeed = 220 + R * 3;
+    const maxSpeed = 260 + R * 4;
 
     // Busy swallowing: stay put and enjoy it.
     if (body.engulfing) return;
@@ -495,6 +517,31 @@ export class Brain {
     }
   }
 
+  /** A random little habit: a hop, a wiggle, a glance around. */
+  private fidget(t: number, body: Body): void {
+    const R = body.radius;
+    const shy = this.stage === 0;
+    this.fidgetWait = (shy ? 4 : 2) + Math.random() * 3.5;
+    const pick = Math.floor(Math.random() * (shy ? 2 : 4));
+    if (pick === 0) {
+      // Glance at a random spot.
+      this.glance = {
+        x: body.hx + (Math.random() * 2 - 1) * R * 6,
+        y: body.hy - Math.random() * R * 4,
+        until: t + 0.9,
+      };
+    } else if (pick === 1) {
+      this.wiggle = 0.45;
+    } else if (pick === 2) {
+      this.intent.pounce = R * (0.4 + Math.random() * 0.4);
+    } else {
+      // A double hop.
+      this.intent.pounce = R * 0.35;
+      this.hopWait = 0;
+      this.fidgetWait = 0.45;
+    }
+  }
+
   /** The cursor just appeared: say hello the way this stage would. */
   private greetByStage(body: Body): void {
     const R = body.radius;
@@ -586,13 +633,13 @@ export class Brain {
     // Idle wandering around where it last was, steered by layered sines.
     const R = body.radius;
     const s = this.wanderSeed;
-    const amp = R * 2 + 60;
-    let tx = this.idleX + (amp * (Math.sin(t * 0.21 + s) + 0.5 * Math.sin(t * 0.53 + s * 2))) / 1.5;
+    const amp = R * 3 + 90;
+    let tx = this.idleX + (amp * (Math.sin(t * 0.33 + s) + 0.5 * Math.sin(t * 0.81 + s * 2))) / 1.5;
     // Keep idle wandering inside the window, clear of the walls.
     const box = body.box;
     const margin = R * 2;
     if (box.right - box.left > margin * 2) tx = Math.max(box.left + margin, Math.min(box.right - margin, tx));
-    this.intent.vx = clamp((tx - body.hx) * 1.2, maxSpeed * 0.4 * (1 - this.mood.sleepy));
+    this.intent.vx = clamp((tx - body.hx) * 1.6, maxSpeed * 0.55 * (1 - this.mood.sleepy));
   }
 }
 

@@ -118,6 +118,7 @@ const frameData: Frame = {
   eyes: screenEyes,
   prey: { x: 0, y: 0, r: 0, alpha: 0 },
   spike: { x: 0, y: 0, r: 0, amount: 0 },
+  purr: 0,
   bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   radius: 0,
   finger: { x: 0, y: 0, r: 0, strength: 0 },
@@ -173,6 +174,7 @@ function buildFrame(time: number): Frame {
   f.spike.y = sy(body.hy);
   f.spike.r = body.radius * z;
   f.spike.amount = body.spikes;
+  f.purr = body.contentment;
   const wb = body.bounds;
   f.bounds.minX = sx(wb.minX);
   f.bounds.minY = sy(wb.minY);

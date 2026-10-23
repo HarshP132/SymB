@@ -61,7 +61,7 @@ export class Sound {
   /** Continuous purring, 0..1. */
   setPurr(level: number): void {
     if (!this.ctx || !this.purrGain || !this.enabled) return;
-    this.purrGain.gain.setTargetAtTime(level * 0.35, this.ctx.currentTime, 0.15);
+    this.purrGain.gain.setTargetAtTime(level * 0.55, this.ctx.currentTime, 0.15);
   }
 
   play(cue: Cue, strength = 1): void {

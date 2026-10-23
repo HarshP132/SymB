@@ -36,8 +36,8 @@ interface Particle {
 }
 
 // Particle radii overlap, so the visible silhouette is ~1.65× this.
-const BASE_RADIUS = 26;
-const GROWTH = 0.35;
+const BASE_RADIUS = 16;
+const GROWTH = 0.5;
 
 const TAU = Math.PI * 2;
 /** Gravity on the flesh, in body radii/s²: enough to sag into a dome. */
@@ -133,6 +133,11 @@ export class Body {
   onGrab?: (food: boolean) => void;
   /** Reduced motion: gentler wobbles, ripples and swirling. */
   calm = false;
+  /** 0..1: how contented it is right now (petted or hugged). */
+  get contentment(): number {
+    return this.purr;
+  }
+
   /** True while it's wrapped around the cursor in a hug. */
   hugging = false;
   /** Called when it bumps into a wall or the ceiling; strength 0..1. */
@@ -169,6 +174,8 @@ export class Body {
   private dreams: Dream[] = [];
   private nextDream = 0;
   private purr = 0;
+  private stepPhase = 0;
+  private lean = 0;
   private giggle = 0;
   private sleep = 0;
   private budWait = 8;
@@ -292,7 +299,7 @@ export class Body {
   private moveHeart(dt: number, ptr: Pointer, intent: Intent): void {
     const R = this.radius;
     const restY = -R * REST_HEIGHT;
-    const maxSpeed = 220 + R * 3;
+    const maxSpeed = 260 + R * 4;
     let desiredVx = clamp(intent.vx, maxSpeed * 1.2);
     // Rooted while swallowing, or while building a tower.
     if (this.engulf || this.tendril.tower > 0.5) desiredVx *= 0.15;
@@ -307,8 +314,14 @@ export class Body {
     }
 
     // Steering is snappy on the ground and floaty in the air.
-    const grip = this.grounded ? 4 : 1;
+    const grip = this.grounded ? 6 : 1;
     this.hvx += (desiredVx - this.hvx) * Math.min(1, dt * grip);
+
+    // A bouncy waddle while it moves, and a lean into the direction it goes.
+    const pace = this.grounded ? Math.min(1, Math.abs(this.hvx) / 200) : 0;
+    this.stepPhase += dt * (7 + Math.abs(this.hvx) * 0.025);
+    squash += (Math.abs(Math.sin(this.stepPhase)) - 0.5) * pace * R * 0.32;
+    this.lean += (clamp(this.hvx / maxSpeed, 1) - this.lean) * Math.min(1, dt * 8);
 
     if (this.grounded) {
       if (intent.pounce > 0 && this.windUp === 0) {
@@ -437,15 +450,18 @@ export class Body {
       } else {
         // Anchor = heart + rotated rest offset + organic wobble, plus the
         // gulp ripple that runs around the body after a catch.
-        const wob = 0.07 * calm * Math.sin(t * (1.1 + p.k * 0.004) + p.phase);
+        const wob =
+          calm * (0.1 * Math.sin(t * (1.4 + p.k * 0.005) + p.phase) + 0.04 * Math.sin(p.angle * 2 + t * 1.7));
         const ripple = this.gulp * 0.25 * calm * Math.sin(p.angle * 3 - this.gulpAge * 14);
-        const purr = this.purr * 0.03 * Math.sin(t * 42 + p.phase);
+        // Purring: a fine shiver, and the whole body puffs up with pleasure.
+        const purr = this.purr * (0.05 * Math.sin(t * 42 + p.phase) + 0.08);
         const giggle = this.giggle * 0.09 * Math.sin(t * 17 + p.angle * 2);
         const s = R * breath * (1 + wob + ripple + purr + giggle);
         const ox = p.ox * cs - p.oy * sn;
         const oy = p.ox * sn + p.oy * cs;
         // Gravity settles the shape: a little wider, a little lower.
-        const tx = this.hx + ox * s * wide;
+        // Leaning: the top runs ahead of the bottom.
+        const tx = this.hx + ox * s * wide - oy * s * this.lean * 0.35;
         const ty = this.hy + oy * s * tall;
         ax = (tx - p.x) * p.k;
         ay = (ty - p.y) * p.k + SAG * R * (1 - st * 0.6);
@@ -458,11 +474,13 @@ export class Body {
         const d = Math.hypot(dx, dy) + 1e-3;
         if (d < pr) {
           const near = 1 - d / pr;
-          // A stroking hand presses gently; a poke pushes hard.
-          const gentle = 1 - 0.7 * Math.max(this.purr, this.giggle);
+          // A stroking hand presses gently; a poke pushes hard. Being
+          // petted, it leans into the hand instead.
+          const gentle = 1 - 0.9 * Math.max(this.purr, this.giggle);
           const push = near * (1400 + Math.min(ptr.speed, 2500) * 1.2) * scale * gentle;
-          ax += (dx / d) * push;
-          ay += (dy / d) * push;
+          const nuzzle = near * 1800 * scale * this.purr;
+          ax += (dx / d) * (push - nuzzle);
+          ay += (dy / d) * (push - nuzzle);
           const drag = near * 10;
           ax += (ptr.vx - p.vx) * drag;
           ay += (ptr.vy - p.vy) * drag;

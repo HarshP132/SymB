@@ -33,6 +33,7 @@ uniform vec4 uEyeB[2]; // tilt, open, happy, lid
 uniform vec2 uEyeC[2]; // lidTilt, side
 uniform vec4 uPrey;    // swallowed cursor: x, y, radius, alpha
 uniform vec4 uSpike;   // spikes: body centre xy, body radius, amount
+uniform float uPurr;   // 0..1: contentment, shown as purr rings and extra gloss
 
 out vec4 outColor;
 
@@ -221,6 +222,17 @@ void main() {
   float cs = uContact.z;
   bg *= 1.0 - (0.22 * pool * cs + 0.35 * tight * cs * cs * cs) * smoothstep(-uR * 0.2, 0.0, dyF);
 
+  // Purring: soft rings ripple out from the body into the void.
+  if (uPurr > 0.01 && dyF < 0.0) {
+    float d = length(p - uSpike.xy);
+    for (int i = 0; i < 3; i++) {
+      float ph = fract(uTime * 0.7 + float(i) / 3.0);
+      float rr = uR * (1.9 + ph * 2.6);
+      float ring = 1.0 - smoothstep(0.0, 1.4, abs(d - rr));
+      bg *= 1.0 - ring * (1.0 - ph) * 0.22 * uPurr;
+    }
+  }
+
   // Glossy floor: a faded mirror image of the goo.
   if (dyF > 0.0) {
     vec2 gr;
@@ -244,7 +256,8 @@ void main() {
   vec3 L = normalize(vec3(-0.45, -0.6, 0.66)); // light from upper left
   vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
   float nh = max(dot(n, H), 0.0);
-  float spec = pow(nh, 70.0) * 0.85 + pow(nh, 10.0) * 0.05;
+  // Contentment makes it shine.
+  float spec = (pow(nh, 70.0) * 0.85 + pow(nh, 10.0) * (0.05 + 0.12 * uPurr)) * (1.0 + 0.4 * uPurr);
   // A black gloss in a white world reflects white at grazing angles.
   float fres = pow(1.0 - n.z, 3.0) * 0.32;
   // The pale floor bounces a little light onto the underside.
@@ -284,6 +297,7 @@ export interface Frame {
   eyes: readonly Eye[];
   prey: { x: number; y: number; r: number; alpha: number };
   spike: { x: number; y: number; r: number; amount: number };
+  purr: number;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   radius: number;
   finger: { x: number; y: number; r: number; strength: number };
@@ -296,7 +310,7 @@ export interface Frame {
 
 const UNIFORMS = [
   'uRes', 'uDpr', 'uCount', 'uBalls', 'uBounds', 'uR', 'uFinger',
-  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC', 'uPrey', 'uSpike',
+  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC', 'uPrey', 'uSpike', 'uPurr',
 ] as const;
 
 export class GooRenderer {
@@ -364,6 +378,7 @@ export class GooRenderer {
     }
     gl.uniform4f(u.uPrey, f.prey.x, f.prey.y, f.prey.r, f.prey.alpha);
     gl.uniform4f(u.uSpike, f.spike.x, f.spike.y, f.spike.r, f.spike.amount);
+    gl.uniform1f(u.uPurr, f.purr);
     gl.uniform4fv(u.uEyeA, this.eyeA);
     gl.uniform4fv(u.uEyeB, this.eyeB);
     gl.uniform2fv(u.uEyeC, this.eyeC);
