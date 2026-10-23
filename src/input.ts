@@ -66,6 +66,8 @@ export class Input implements Pointer {
     this.y = e.clientY;
     this.lastEventTime = e.timeStamp;
     this.vx = this.vy = 0;
+    // Appearing (or touching down) counts as movement.
+    this.moved = true;
   }
 
   private onMove(e: PointerEvent): void {

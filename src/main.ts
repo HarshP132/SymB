@@ -1,4 +1,5 @@
 import { Body, type Ball } from './creature/body';
+import { Face, type Eye, type Expression } from './creature/face';
 import { Input, type Pointer } from './input';
 import { GooRenderer, type Frame } from './render/goo';
 import { Camera } from './world/camera';
@@ -33,6 +34,8 @@ window.addEventListener('resize', resize);
 
 const input = new Input(canvas);
 const body = new Body(0);
+const face = new Face();
+body.onCatch = () => face.delight();
 
 /** The cursor as SymB sees it: in world space. */
 const pointer: Pointer = { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false };
@@ -47,8 +50,10 @@ function syncPointer(): void {
 
 // Screen-space copy of the world for the renderer, reused every frame.
 const screenBalls: Ball[] = [];
+const screenEyes: Eye[] = face.eyes.map((e) => ({ ...e }));
 const frameData: Frame = {
   balls: screenBalls,
+  eyes: screenEyes,
   bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   radius: 0,
   finger: { x: 0, y: 0, r: 0, strength: 0 },
@@ -73,6 +78,10 @@ function buildFrame(time: number): Frame {
     s.y = sy(b.y);
     s.r = b.r * z;
     s.sharp = b.sharp;
+  }
+  for (let i = 0; i < 2; i++) {
+    const e = face.eyes[i];
+    Object.assign(screenEyes[i], e, { x: sx(e.x), y: sy(e.y), rx: e.rx * z, ry: e.ry * z });
   }
   const wb = body.bounds;
   f.bounds.minX = sx(wb.minX);
@@ -99,11 +108,15 @@ if (debug) {
   debugEl = document.createElement('div');
   debugEl.id = 'debug';
   document.body.appendChild(debugEl);
-  (window as unknown as { symb: unknown }).symb = { body, camera, pointer };
+  (window as unknown as { symb: unknown }).symb = { body, face, camera, pointer };
   window.addEventListener('keydown', (e) => {
     // Match physical keys so layout and Caps Lock don't matter.
     if (e.code === 'KeyG') body.mass += e.shiftKey ? 25 : 1;
     if (e.code === 'KeyR') body.mass = 0;
+    const faces: Record<string, Expression> = {
+      Digit0: 'auto', Digit1: 'curious', Digit2: 'happy', Digit3: 'scared', Digit4: 'sleepy',
+    };
+    if (e.code in faces) face.forced = faces[e.code];
   });
 }
 
@@ -124,6 +137,7 @@ function frame(now: number): void {
     input.update(STEP);
     syncPointer();
     body.update(STEP, time, pointer);
+    face.update(STEP, time, body, pointer, input.stillFor);
     camera.update(STEP, body.hx, body.radius);
     time += STEP;
     acc -= STEP;
@@ -144,7 +158,7 @@ function frame(now: number): void {
     debugEl.textContent =
       `${fps.toFixed(0)} fps · dpr ${dpr}\n` +
       `mass ${body.mass} · catches ${body.catches} · radius ${body.radius.toFixed(1)}px · zoom ${camera.zoom.toFixed(2)}\n` +
-      `g / G grow · r reset`;
+      `g / G grow · r reset · 1–4 face (curious, happy, scared, sleepy) · 0 auto`;
   }
 
   requestAnimationFrame(frame);

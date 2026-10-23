@@ -2,6 +2,7 @@
 // Each pixel sums the field r²/d² of every ball; the surface sits at field = 1.
 
 import type { Ball } from '../creature/body';
+import type { Eye } from '../creature/face';
 
 export const MAX_BALLS = 96;
 
@@ -27,6 +28,9 @@ uniform vec3 uContact;  // centre x, half-width and strength of the floor contac
 uniform float uCamX;    // camera x in world px, for dust parallax
 uniform float uZoom;
 uniform float uTime;
+uniform vec4 uEyeA[2]; // x, y, rx, ry (css px)
+uniform vec4 uEyeB[2]; // tilt, open, happy, lid
+uniform vec2 uEyeC[2]; // lidTilt, side
 
 out vec4 outColor;
 
@@ -85,6 +89,50 @@ float dust(vec2 p, float viewW) {
     a += (0.18 + 0.14 * l) * twinkle * (1.0 - smoothstep(r - 0.6, r + 0.6, d));
   }
   return a;
+}
+
+// Cheap signed distance to an ellipse (good near the edge, which is all
+// anti-aliasing needs).
+float sdEllipse(vec2 p, vec2 r) {
+  float k0 = length(p / r);
+  float k1 = length(p / (r * r));
+  return k0 * (k0 - 1.0) / max(k1, 1e-5);
+}
+
+// One of SymB's eyes: a tilted oval, optionally cut into a happy crescent
+// from below and covered by a (possibly slanted) upper lid. Returns
+// coverage, and a 0..1 shade that darkens under the lid line.
+vec2 eye(vec2 p, vec4 a, vec4 b, vec2 c) {
+  float side = c.y;
+  vec2 q = p - a.xy;
+  q.x *= side; // local +x points away from the face's centre
+  float cs = cos(b.x), sn = sin(b.x);
+  vec2 e = vec2(q.x * cs + q.y * sn, -q.x * sn + q.y * cs);
+
+  float open = b.y;
+  float ry = max(a.w * open, 0.9 / uDpr);
+  // Lids meet a little below the middle, like real ones.
+  e.y -= (1.0 - open) * a.w * 0.3;
+  float d = sdEllipse(e, vec2(a.z, ry));
+
+  // Happy: a bigger oval rises from below and bites the eye into a ^.
+  float happy = b.z;
+  if (happy > 0.001) {
+    vec2 hc = vec2(0.0, ry * (0.62 + 1.9 * (1.0 - happy)));
+    d = max(d, -sdEllipse(e - hc, vec2(a.z * 1.12, ry * 1.08)));
+  }
+
+  // Upper lid: comes down by "lid", its inner end raised by "lidTilt".
+  float lid = b.w;
+  if (lid > 0.001) {
+    float slope = c.x * ry / a.z;
+    float y0 = -ry + 2.0 * ry * lid;
+    d = max(d, (y0 + slope * e.x - e.y) / sqrt(1.0 + slope * slope));
+  }
+
+  float cover = clamp(-d * uDpr + 0.5, 0.0, 1.0);
+  float shade = smoothstep(-ry, ry * 0.2, e.y);
+  return vec2(cover, shade);
 }
 
 // Anti-aliased coverage of the surface, from an approximate distance.
@@ -156,6 +204,13 @@ void main() {
 
   vec3 col = INK + vec3(spec) + vec3(fres) * vec3(0.93, 0.93, 0.95) + vec3(bounce);
 
+  // Eyes, painted on the goo (so a dent or a stretch takes them along).
+  for (int i = 0; i < 2; i++) {
+    vec2 ev = eye(p, uEyeA[i], uEyeB[i], uEyeC[i]);
+    vec3 white = mix(vec3(0.80, 0.80, 0.82), vec3(0.975, 0.975, 0.965), ev.y);
+    col = mix(col, white, ev.x);
+  }
+
   outColor = vec4(mix(bg, col, alpha), 1.0);
 }
 `;
@@ -173,6 +228,7 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 /** Everything the renderer needs for one frame, in screen (css px) space. */
 export interface Frame {
   balls: readonly Ball[];
+  eyes: readonly Eye[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   radius: number;
   finger: { x: number; y: number; r: number; strength: number };
@@ -185,13 +241,16 @@ export interface Frame {
 
 const UNIFORMS = [
   'uRes', 'uDpr', 'uCount', 'uBalls', 'uBounds', 'uR', 'uFinger',
-  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime',
+  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC',
 ] as const;
 
 export class GooRenderer {
   private gl: WebGL2RenderingContext;
   private u = {} as Record<(typeof UNIFORMS)[number], WebGLUniformLocation | null>;
   private ballData = new Float32Array(MAX_BALLS * 4);
+  private eyeA = new Float32Array(8);
+  private eyeB = new Float32Array(8);
+  private eyeC = new Float32Array(4);
 
   constructor(private canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
@@ -242,6 +301,15 @@ export class GooRenderer {
     gl.uniform1f(u.uCamX, f.camX);
     gl.uniform1f(u.uZoom, f.zoom);
     gl.uniform1f(u.uTime, f.time);
+    for (let i = 0; i < 2; i++) {
+      const e = f.eyes[i];
+      this.eyeA.set([e.x, e.y, e.rx, e.ry], i * 4);
+      this.eyeB.set([e.tilt, e.open, e.happy, e.lid], i * 4);
+      this.eyeC.set([e.lidTilt, e.side], i * 2);
+    }
+    gl.uniform4fv(u.uEyeA, this.eyeA);
+    gl.uniform4fv(u.uEyeB, this.eyeB);
+    gl.uniform2fv(u.uEyeC, this.eyeC);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }
