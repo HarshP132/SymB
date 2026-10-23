@@ -49,6 +49,11 @@ export class Face {
   // Eased, displayed expression parameters.
   private shown = { open: 1, happy: 0, lid: 0, lidTilt: 0, size: 1 };
 
+  /** Squeeze the eyes shut for a moment (a bump, a bonk). */
+  wince(): void {
+    this.startBlink();
+  }
+
   update(dt: number, t: number, body: Body, ptr: Pointer, mood: Readonly<Mood>): void {
     const m = Object.assign(this.mood, mood);
     switch (this.forced) {

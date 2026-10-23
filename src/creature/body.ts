@@ -47,6 +47,8 @@ const DROP_FALL = 30;
 const REST_HEIGHT = 1.25;
 /** Gravity on the whole creature while it is in the air, px/s². */
 const GRAVITY = 2600;
+/** How close the heart may get to a wall or the ceiling, in body radii. */
+const WALL_INSET = 1.25;
 /** How long the bubble takes to close around a catch, s. */
 const WRAP_TIME = 0.35;
 
@@ -72,6 +74,13 @@ export function idleIntent(): Intent {
   return { vx: 0, crouch: 0, spikes: 0, reach: null, catchable: false, pounce: 0, hug: 0 };
 }
 
+/** The window's edges in world space: SymB's walls and ceiling. */
+export interface Box {
+  left: number;
+  right: number;
+  top: number;
+}
+
 /** A catch in progress: the cursor wrapped in goo, travelling home. */
 interface Engulf {
   age: number;
@@ -93,6 +102,10 @@ export class Body {
   catches = 0;
   /** Called when a caught cursor has been swallowed. */
   onCatch?: () => void;
+  /** Called when it bumps into a wall or the ceiling; strength 0..1. */
+  onImpact?: (strength: number) => void;
+  /** Where the walls are; set each step from the window. */
+  readonly box: Box = { left: -Infinity, right: Infinity, top: -Infinity };
 
   readonly particles: Particle[] = [];
   readonly balls: Ball[] = [];
@@ -117,6 +130,7 @@ export class Body {
   /** Strength and age of the ripple that runs through it after a catch. */
   private gulp = 0;
   private gulpAge = 0;
+  private impactWait = 0;
   private readonly bubble: Ball[] = [];
 
   constructor(x: number) {
@@ -182,6 +196,7 @@ export class Body {
     const R = this.radius;
     this.gulp *= Math.exp(-dt * 2.2);
     this.gulpAge += dt;
+    this.impactWait = Math.max(0, this.impactWait - dt);
     this.crouch += (intent.crouch - this.crouch) * Math.min(1, dt * 8);
     // Spikes shoot out fast and melt back slowly.
     const sk = intent.spikes > this.spikes ? 18 : 2.5;
@@ -254,6 +269,42 @@ export class Body {
     }
     // Never let the heart sink through the floor, however hard it's pressed.
     this.hy = Math.min(this.hy, -R * 0.6);
+
+    // The window is SymB's world: bump off its sides and its top.
+    const box = this.box;
+    const inset = R * WALL_INSET;
+    if (box.right - box.left < inset * 2) {
+      this.hx = (box.left + box.right) / 2;
+    } else if (this.hx < box.left + inset) {
+      this.hx = box.left + inset;
+      if (this.hvx < 0) {
+        this.impact(-this.hvx);
+        this.hvx *= -0.25;
+      }
+    } else if (this.hx > box.right - inset) {
+      this.hx = box.right - inset;
+      if (this.hvx > 0) {
+        this.impact(this.hvx);
+        this.hvx *= -0.25;
+      }
+    }
+    if (this.hy < box.top + inset) {
+      this.hy = box.top + inset;
+      if (this.hvy < 0) {
+        this.impact(-this.hvy);
+        this.hvy *= -0.2;
+      }
+    }
+  }
+
+  /** A bump against the window: a jiggle, and a reaction from the brain. */
+  private impact(speed: number): void {
+    const strength = Math.min(1, Math.max(0, (speed - 250) / 900));
+    if (strength < 0.05 || this.impactWait > 0) return;
+    this.impactWait = 0.3;
+    this.gulp = Math.max(this.gulp, strength * 0.6);
+    this.gulpAge = 0;
+    this.onImpact?.(strength);
   }
 
   /** The highest a pounce can lift the heart, px. */
@@ -344,6 +395,19 @@ export class Body {
         p.y = lowest;
         if (p.vy > 0) p.vy *= -0.1;
         if (!p.droplet) p.vx *= Math.exp(-dt * 10); // sticky friction; droplets roll
+      }
+      // The window's sides and top squash it flat the same way.
+      const pad = p.r * R * 1.25;
+      if (p.x < this.box.left + pad) {
+        p.x = this.box.left + pad;
+        if (p.vx < 0) p.vx *= -0.1;
+      } else if (p.x > this.box.right - pad) {
+        p.x = this.box.right - pad;
+        if (p.vx > 0) p.vx *= -0.1;
+      }
+      if (p.y < this.box.top + pad) {
+        p.y = this.box.top + pad;
+        if (p.vy < 0) p.vy *= -0.1;
       }
 
       // The finger is solid: goo can't sit inside it, so it visibly dents.

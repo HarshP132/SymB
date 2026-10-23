@@ -16,7 +16,8 @@ It isn't a game. There is no score, no level, no UI to manage. It's a small livi
 **Look & feel**
 
 - **Floor:** SymB lives on an endless pale floor a little below the middle of the screen. Gravity makes it settle into a soft dome with a flat base, and loose droplets fall and roll back to it. The glossy floor shows a faded reflection and a soft contact shadow. Later jumps and pounces leave the floor and land back on it.
-- **Space:** pure off-white void (`#FAFAF8`). Faint grey dust specks drift in parallax layers so you sense depth and motion, and the camera follows SymB softly, so the space never ends.
+- **Space:** pure off-white void (`#FAFAF8`). Faint grey dust specks drift in parallax layers so you sense depth and motion.
+- **The window is its world:** the browser window's left, right and top edges are walls. SymB collides with them, squashing flat against the glass and jiggling (with a wince) on hard bumps. The camera never pans; it only zooms out as SymB grows, so the box gets roomier around it.
 - **Creature:** glossy ink-black goo made of metaballs, so blobs merge and separate like liquid. A soft highlight gives it a little volume.
 - **Face:** two white, slightly asymmetric eyes in the symbiote style, but rounded and cute. They carry most of the emotion: wide when curious, squished when happy, narrow slits when scared, closed when sleeping.
 - **Tendrils:** thin goo strands that reach out, poke, grab and wrap.
@@ -29,7 +30,7 @@ A hidden **Bond** value from 0 to 100 drives five stages. Movement and expressio
 
 | Stage | Bond | Behaviour | Catching you looks like… |
 |---|---|---|---|
-| **1. Shy** | 0–15 | Hides near the screen edge with only its eyes peeking out. Flees from fast movement and trembles. Creeps closer only while your cursor is still. | You hold still and it slowly creeps up and timidly touches the cursor with one tendril, then darts back. |
+| **1. Shy** | 0–15 | Hides pressed into the corner of the window, away from you, eyes peeking out. Flees from fast movement and trembles. Creeps closer only while your cursor is still. | You hold still and it slowly creeps up and timidly touches the cursor with one tendril, then darts back. |
 | **2. Curious** | 15–35 | Follows from a distance and tilts its eyes to watch you. Pokes at the cursor, and is easily startled but recovers fast. | A quick poke-and-retreat. |
 | **3. Playful** | 35–60 | Actively chases you, crouches before it pounces, overshoots and tumbles. Plays tag: if you chase it, it runs off giggling (jiggling). | A real pounce. You can dodge it. |
 | **4. Friendly** | 60–85 | Stays close and orbits your cursor. Wraps around it when caught, rubs against it and "purrs" (vibrating ripple). | Envelops the cursor in a little hug. |
@@ -130,7 +131,7 @@ A hidden **Bond** value from 0 to 100 drives five stages. Movement and expressio
 src/
   main.ts            loop, resize, bootstrap
   input.ts           pointer tracking + gesture analysis
-  world/camera.ts    follow + zoom-by-size
+  world/camera.ts    window box + zoom-by-size
   world/dust.ts      parallax void particles
   creature/body.ts   verlet particles, membrane, tendrils, buds
   creature/brain.ts  emotions, bond, stages, state machine, steering

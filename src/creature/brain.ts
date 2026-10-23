@@ -6,7 +6,7 @@
 // with excited hops.
 
 import type { Pointer } from '../input';
-import { type Body, type Intent, idleIntent } from './body';
+import { type Body, type Box, type Intent, idleIntent } from './body';
 import { Tendril } from './tendril';
 
 /** Emotions, each 0..1, easing back toward calm on their own. */
@@ -37,18 +37,10 @@ const BOND_PER_MIN_TRUST = 0.6;
 const BOND_PER_CATCH = 0.35;
 const BOND_PER_STARTLE = -0.25;
 
-/** The visible stretch of world, for hiding at the screen's edge. */
-export interface View {
-  left: number;
-  right: number;
-}
-
 export class Brain {
   bond = 0;
   readonly mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0 };
   readonly intent: Intent = idleIntent();
-  /** True while the camera should stay put (SymB is hiding at its edge). */
-  holdCamera = false;
 
   private rest = 0;
   private flee = 0;
@@ -72,6 +64,12 @@ export class Brain {
     return STAGES[this.stage];
   }
 
+  /** It bumped into the window: fun when playful, alarming when shy. */
+  onImpact(strength: number): void {
+    if (this.stage === 0) this.mood.fear = Math.min(1, this.mood.fear + strength * 0.3);
+    else this.mood.joy = Math.max(this.mood.joy, strength * 0.5);
+  }
+
   /** The cursor has been swallowed. */
   onCatch(): void {
     this.mood.joy = 1;
@@ -84,7 +82,7 @@ export class Brain {
     }
   }
 
-  update(dt: number, t: number, body: Body, ptr: Pointer, stillFor: number, view: View): void {
+  update(dt: number, t: number, body: Body, ptr: Pointer, stillFor: number): void {
     this.rest = Math.max(0, this.rest - dt);
     this.flee = Math.max(0, this.flee - dt);
     this.tag = Math.max(0, this.tag - dt);
@@ -95,7 +93,7 @@ export class Brain {
     this.greet = Math.max(0, this.greet - dt);
 
     this.feel(dt, body, ptr, stillFor);
-    this.decide(t, body, ptr, stillFor, view);
+    this.decide(t, body, ptr, stillFor);
   }
 
   private feel(dt: number, body: Body, ptr: Pointer, stillFor: number): void {
@@ -155,7 +153,7 @@ export class Brain {
     m.surprise += ((body.grounded ? 0 : 1) - m.surprise) * Math.min(1, dt * 8);
   }
 
-  private decide(t: number, body: Body, ptr: Pointer, stillFor: number, view: View): void {
+  private decide(t: number, body: Body, ptr: Pointer, stillFor: number): void {
     const it = this.intent;
     const m = this.mood;
     const st = this.stage;
@@ -167,7 +165,6 @@ export class Brain {
     it.catchable = false;
     it.hug = st >= 3 ? 0.25 + (st - 3) * 0.2 : 0;
     it.spikes = this.spikeTime > 0 ? 1 : st <= 1 && m.fear > 0.7 ? 0.35 : 0;
-    this.holdCamera = false;
 
     // Busy swallowing: stay put and enjoy it.
     if (body.engulfing) return;
@@ -195,7 +192,7 @@ export class Brain {
     // Hiding / running scared, or darting back after a daring catch.
     if (this.flee > 0 || (m.fear > 0.5 && st <= 1) || m.fear > 0.85) {
       if (st === 0) {
-        this.hide(body, ptr, view, maxSpeed * 1.1);
+        this.hide(body, ptr, body.box, maxSpeed * 1.1);
         it.crouch = 0.6;
       } else {
         it.vx = -dir * maxSpeed;
@@ -214,14 +211,13 @@ export class Brain {
     }
 
     if (st === 0) {
-      this.holdCamera = true;
       if (m.courage > 0.6 && stillFor > 1) {
         // Creep, low and slow, toward the cursor that's keeping still.
         it.vx = toward(R * 2.4, 0.18);
         it.crouch = 0.3;
         if (m.courage > 0.85) this.tryReach(body, ptr, false, false, 0.45);
       } else if (adx < R * 7) {
-        this.hide(body, ptr, view, maxSpeed * 0.5);
+        this.hide(body, ptr, body.box, maxSpeed * 0.5);
         it.crouch = 0.5;
       } else {
         // Far enough: stay low and peek.
@@ -299,12 +295,13 @@ export class Brain {
     }
   }
 
-  /** Retreat toward the screen edge away from the cursor, half off-screen. */
-  private hide(body: Body, ptr: Pointer, view: View, speed: number): void {
+  /** Retreat into the corner away from the cursor and press up against it. */
+  private hide(body: Body, ptr: Pointer, box: Box, speed: number): void {
     const R = body.radius;
-    const away = ptr.x > body.hx ? view.left + R * 0.6 : view.right - R * 0.6;
-    this.intent.vx = clamp((away - body.hx) * 3, speed);
-    this.holdCamera = true;
+    const away = ptr.x > body.hx ? box.left : box.right;
+    // Aim past the wall so it squashes itself into the corner.
+    const push = (away - body.hx) * 3 + Math.sign(away - body.hx) * R;
+    this.intent.vx = clamp(push, speed);
   }
 
   private wander(t: number, body: Body, maxSpeed: number): void {
@@ -312,7 +309,11 @@ export class Brain {
     const R = body.radius;
     const s = this.wanderSeed;
     const amp = R * 2 + 60;
-    const tx = this.idleX + (amp * (Math.sin(t * 0.21 + s) + 0.5 * Math.sin(t * 0.53 + s * 2))) / 1.5;
+    let tx = this.idleX + (amp * (Math.sin(t * 0.21 + s) + 0.5 * Math.sin(t * 0.53 + s * 2))) / 1.5;
+    // Keep idle wandering inside the window, clear of the walls.
+    const box = body.box;
+    const margin = R * 2;
+    if (box.right - box.left > margin * 2) tx = Math.max(box.left + margin, Math.min(box.right - margin, tx));
     this.intent.vx = clamp((tx - body.hx) * 1.2, maxSpeed * 0.4 * (1 - this.mood.sleepy));
   }
 }

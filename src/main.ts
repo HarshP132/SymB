@@ -39,6 +39,10 @@ const body = new Body(0);
 const face = new Face();
 const brain = new Brain();
 body.onCatch = () => brain.onCatch();
+body.onImpact = (strength) => {
+  brain.onImpact(strength);
+  face.wince();
+};
 
 // Pick up where we left off.
 const saved = load();
@@ -192,11 +196,11 @@ function frame(now: number): void {
   while (acc >= STEP && steps < MAX_STEPS) {
     input.update(STEP);
     syncPointer();
-    const view = { left: camera.toWorldX(0), right: camera.toWorldX(window.innerWidth) };
-    brain.update(STEP, time, body, pointer, input.stillFor, view);
+    camera.box(body.box);
+    brain.update(STEP, time, body, pointer, input.stillFor);
     body.update(STEP, time, pointer, brain.intent);
     face.update(STEP, time, body, pointer, brain.mood);
-    camera.update(STEP, brain.holdCamera ? camera.x : body.hx, body.radius);
+    camera.update(STEP, body.radius);
     time += STEP;
     acc -= STEP;
     steps++;
