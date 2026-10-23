@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#fafaf8" />
+    <title>SymB</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #fafaf8;
+        overscroll-behavior: none;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #fallback {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font: 15px/1.4 system-ui, sans-serif;
+        color: #888;
+      }
+      #debug {
+        position: fixed;
+        left: 10px;
+        top: 8px;
+        font: 11px/1.4 ui-monospace, monospace;
+        color: #999;
+        pointer-events: none;
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="fallback">SymB needs WebGL2 to live here.</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

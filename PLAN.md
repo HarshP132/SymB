@@ -56,7 +56,7 @@ A hidden **Bond** value from 0 to 100 drives five stages. Movement and expressio
 | **Sleep** | No input for ~30 s | Slow breathing, closed eyes, tiny bubbles drifting up. Moving the cursor gently wakes it with a stretch. |
 | **Budding** (when large) | Passive | Small droplets bud off, float around it and get reabsorbed, which is the "living liquid" feel. |
 
-**Growth:** radius = `base × (1 + k·log(1 + mass))`. Growth is fast early on and slows later. As it grows, the camera gently zooms out so it never fills more than about 35% of the screen. You can still tell it's huge because the dust specks look tiny next to it.
+**Growth:** radius = `base × (1 + k·log(1 + mass))`. Growth is fast early on and slows later. There is no cap: it grows forever. As it grows, the camera gently zooms out so it never fills more than about 35% of the screen. You can still tell it's huge because the dust specks look tiny next to it.
 
 **Touch devices:** a finger acts as the cursor. Long-press is the hug and tap is feed.
 
@@ -160,11 +160,13 @@ Each milestone ends with something you can open in a browser and react to before
 
 ---
 
-## 7. Open questions
+## 7. Decisions
 
-1. **Name:** is it called "SymB", or does the user name it on first visit?
-2. **Sound:** include procedural audio (muted by default), or keep it fully silent?
-3. **Pacing:** is ~60–90 min of total play to reach Super Friendly right, or should it be faster?
-4. **Regression:** should neglect or rough play lower bond (gently), or should progress only ever go up?
-5. **Size cap:** grow forever (with camera zoom), or reach a maximum adult size?
-6. **Platform:** desktop-first with touch support, or equal priority on mobile?
+| Topic | Decision |
+|---|---|
+| Name | **SymB** (default) |
+| Sound | Procedural audio, **muted by default** (default) |
+| Pacing | ~60–90 min cumulative play to Super Friendly (default, tunable) |
+| Regression | Gentle decay, never more than half a stage (default) |
+| Size | **Grows forever**: no cap. The camera zooms out logarithmically, and the dust/parallax layers rescale so the void keeps conveying scale. |
+| Platform | **Desktop and touch, equal priority**: every interaction has a touch equivalent, performance is budgeted for mid-range phones, and there is no hover-only behaviour. |
