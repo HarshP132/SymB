@@ -6,6 +6,7 @@ import { GooRenderer, type Frame } from './render/goo';
 import { Camera } from './world/camera';
 import { Pantry } from './world/food';
 import { forget, load, save } from './save';
+import { Sound } from './audio';
 
 const STEP = 1 / 120; // fixed physics step
 const MAX_STEPS = 8;
@@ -40,11 +41,13 @@ const body = new Body(0);
 const face = new Face();
 const brain = new Brain();
 const pantry = new Pantry();
-body.onCatch = () => brain.onCatch();
-body.onEat = () => brain.onEat();
-body.onImpact = (strength) => {
-  brain.onImpact(strength);
-  face.wince();
+body.onCatch = () => {
+  brain.onCatch();
+  sound.play('gulp');
+};
+body.onEat = () => {
+  brain.onEat();
+  sound.play('gulp');
 };
 
 // Pick up where we left off.
@@ -53,9 +56,17 @@ if (saved) {
   brain.bond = saved.bond;
   body.setMass(saved.mass);
   body.catches = saved.catches;
+  // Older saves didn't track moments: don't replay ones it lived through.
+  const reached = saved.reached.length ? saved.reached : [...Array(brain.stage + 1).keys()];
+  for (const s of reached) brain.reached.add(s);
   brain.welcomeBack((Date.now() - saved.at) / 3_600_000);
+} else {
+  // First meeting: a little drop falls into the world.
+  camera.box(body.box);
+  body.dropIn(body.box.top);
 }
-const remember = () => save({ bond: brain.bond, mass: body.mass, catches: body.catches });
+const remember = () =>
+  save({ bond: brain.bond, mass: body.mass, catches: body.catches, reached: [...brain.reached] });
 setInterval(remember, 5000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) remember();
@@ -82,6 +93,7 @@ const frameData: Frame = {
   eyes: screenEyes,
   prey: { x: 0, y: 0, r: 0, alpha: 0 },
   spike: { x: 0, y: 0, r: 0, amount: 0 },
+  heart: 0,
   bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   radius: 0,
   finger: { x: 0, y: 0, r: 0, strength: 0 },
@@ -102,6 +114,7 @@ function handleTaps(): void {
       brain.onBoop();
       body.jiggle(0.5);
       face.wince();
+      sound.play('boop');
     } else {
       pantry.drop(x, y, R);
     }
@@ -136,6 +149,7 @@ function buildFrame(time: number): Frame {
   f.spike.y = sy(body.hy);
   f.spike.r = body.radius * z;
   f.spike.amount = body.spikes;
+  f.heart = body.heart;
   const wb = body.bounds;
   f.bounds.minX = sx(wb.minX);
   f.bounds.minY = sy(wb.minY);
@@ -163,6 +177,57 @@ function buildFrame(time: number): Frame {
   f.time = time;
   return f;
 }
+
+// Sound, help and captions: the only interface, kept quiet in a corner.
+const sound = new Sound();
+const soundBtn = document.getElementById('sound') as HTMLButtonElement;
+soundBtn.addEventListener('click', () => {
+  const on = sound.toggle();
+  soundBtn.setAttribute('aria-pressed', String(on));
+  soundBtn.setAttribute('aria-label', on ? 'Sound on' : 'Sound off');
+  soundBtn.querySelector('.on')!.toggleAttribute('hidden', !on);
+  soundBtn.querySelector('.off')!.toggleAttribute('hidden', on);
+});
+const helpBtn = document.getElementById('help-toggle') as HTMLButtonElement;
+const help = document.getElementById('help')!;
+helpBtn.addEventListener('click', () => {
+  help.hidden = !help.hidden;
+  helpBtn.setAttribute('aria-expanded', String(!help.hidden));
+});
+canvas.addEventListener('pointerdown', () => {
+  help.hidden = true;
+  helpBtn.setAttribute('aria-expanded', 'false');
+});
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+const captionEl = document.getElementById('caption')!;
+let captionTimer = 0;
+/** A line of text that fades in under the floor, then away. */
+function caption(text: string, delay = 0, hold = 4500): void {
+  window.setTimeout(() => {
+    captionEl.textContent = text;
+    captionEl.classList.add('show');
+    window.clearTimeout(captionTimer);
+    captionTimer = window.setTimeout(() => captionEl.classList.remove('show'), hold);
+  }, delay);
+}
+const MOMENT_LINES = ['', 'SymB is curious about you', 'SymB wants to play', 'SymB trusts you', 'SymB adores you'];
+if (!saved) caption('move gently…', 1800, 5000);
+
+body.onGrab = (food) => sound.play(food ? 'slurp' : 'grab');
+body.onImpact = (strength) => {
+  brain.onImpact(strength);
+  face.wince();
+  sound.play('bump', strength);
+};
+brain.onEvent = (e, stage) => {
+  if (e === 'tickle') sound.play('giggle');
+  if (e === 'startle') sound.play('spikes');
+  if (e === 'moment') {
+    sound.play('chime');
+    caption(MOMENT_LINES[stage]);
+  }
+};
 
 let debugEl: HTMLElement | null = null;
 let bondSlider: HTMLInputElement | null = null;
@@ -241,6 +306,7 @@ function frame(now: number): void {
 
   renderer.render(buildFrame(time), dpr);
   // While it's swallowing your cursor, your cursor is gone.
+  sound.setPurr(brain.mood.content);
   const cursor = body.holdingCursor ? 'none' : '';
   if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 

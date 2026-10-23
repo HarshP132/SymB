@@ -13,6 +13,7 @@ SymB remembers its bond and size in your browser (localStorage).
 - **Stroke** it slowly to pet it; **circle** quickly on it to tickle it.
 - **Click / tap** empty space to drop food; click it to boop it.
 - **Press and hold** on it for a hug (once it's friendly).
+- The **speaker** button (top right) turns on its sounds, all synthesised in code; **?** shows these tips.
 - **Leave** for a while and it falls asleep; come back gently and it wakes with a stretch.
 
 ## Run

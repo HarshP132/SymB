@@ -47,10 +47,18 @@ const BOND_PER_MEAL = 0.15;
 const BOND_DECAY_PER_HOUR = 0.25;
 /** Hold a press on SymB this long for a hug (or a squirm), s. */
 const PRESS_TIME = 0.35;
+/** How long each stage's one-time "moment" lasts, s. */
+const MOMENT_TIME = [0, 2.6, 2.2, 2.6, 3.2];
+
+/** Things worth a sound or a caption. */
+export type BrainEvent = 'tickle' | 'startle' | 'moment';
 
 export class Brain {
   bond = 0;
   readonly mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0, content: 0 };
+  /** Stages it has reached at least once; each gets its moment only once. */
+  readonly reached = new Set<number>([0]);
+  onEvent?: (e: BrainEvent, stage: number) => void;
   /** Something it's looking at instead of the cursor (food, where you left). */
   lookAt: { x: number; y: number } | null = null;
   readonly intent: Intent = idleIntent();
@@ -75,6 +83,9 @@ export class Brain {
   /** The cursor is touching its body (so it's being handled, not hunted). */
   private touching = false;
   private asleep = false;
+  private moment: { stage: number; left: number } | null = null;
+  private heartTime = 0;
+  private bliss = 0;
   // Where and when the cursor was last seen, for waiting by the door.
   private lastSeen = { x: 0, y: 0 };
   private leftAt = 0;
@@ -124,6 +135,7 @@ export class Brain {
     this.mood.joy = 1;
     this.bond = Math.min(100, this.bond + BOND_PER_CATCH);
     this.rest = REST[this.stage];
+    if (this.stage === 4) this.heartTime = 2.2;
     if (this.stage === 0) {
       // Thrilled and terrified at its own daring: dart back to safety.
       this.flee = 1.4;
@@ -141,6 +153,12 @@ export class Brain {
     this.hopWait = Math.max(0, this.hopWait - dt);
     this.greet = Math.max(0, this.greet - dt);
     this.tickle = Math.max(0, this.tickle - dt);
+    this.heartTime = Math.max(0, this.heartTime - dt);
+    this.checkMilestone();
+    if (this.moment && ptr.active) {
+      this.moment.left -= dt;
+      if (this.moment.left <= 0) this.moment = null;
+    }
 
     this.sense(dt, body, ptr);
     this.feel(dt, body, ptr, stillFor);
@@ -176,7 +194,17 @@ export class Brain {
     this.press = ptr.down && onBody ? this.press + dt : 0;
   }
 
+  /** The first time it reaches a stage, it does something special. */
+  private checkMilestone(): void {
+    const st = this.stage;
+    if (this.reached.has(st)) return;
+    for (let s = 0; s <= st; s++) this.reached.add(s);
+    this.moment = { stage: st, left: MOMENT_TIME[st] };
+    this.onEvent?.('moment', st);
+  }
+
   private onTickled(): void {
+    this.onEvent?.('tickle', this.stage);
     if (this.stage === 0) {
       this.mood.fear = Math.min(1, this.mood.fear + 0.4);
     } else {
@@ -219,6 +247,7 @@ export class Brain {
         this.startleWait = 4;
         this.spikeTime = 0.9;
         this.bond += BOND_PER_STARTLE;
+        this.onEvent?.('startle', st);
       }
 
       if (d < R * 8 && m.fear < 0.3) this.bond += (dt * BOND_PER_MIN_TOGETHER) / 60;
@@ -245,6 +274,12 @@ export class Brain {
     const bliss = petted || this.hugging ? 1 : 0;
     m.content += (bliss - m.content) * Math.min(1, dt * (bliss ? 1.5 : 1));
     if (petted) this.bond += (dt * BOND_PER_MIN_PETTING) / 60;
+    // A super friendly SymB petted long enough melts into a heart.
+    this.bliss = st === 4 && m.content > 0.95 ? this.bliss + dt : 0;
+    if (this.bliss > 4) {
+      this.bliss = 0;
+      this.heartTime = 2.5;
+    }
     if (this.hugging) this.bond += (dt * BOND_PER_MIN_HUGGING) / 60;
     this.bond = Math.max(0, Math.min(100, this.bond));
     if (m.content > 0.5) m.fear *= Math.exp(-dt * 3);
@@ -275,6 +310,7 @@ export class Brain {
     it.purr = m.content;
     it.giggle = this.tickle > 0 ? 1 : 0;
     it.sleep = m.sleepy > 0.8 ? 1 : 0;
+    it.heart = this.heartTime > 0 || this.moment?.stage === 4 ? 1 : 0;
     this.lookAt = null;
     this.choose(t, body, ptr, stillFor, pantry);
     // Sleepy heads sink low.
@@ -312,9 +348,15 @@ export class Brain {
     }
     if (!this.wasActive) {
       this.wasActive = true;
-      this.greetByStage(body);
+      // A finger lifted for a moment hasn't really left.
+      if (t - this.leftAt > 3) this.greetByStage(body);
     }
     this.idleX = body.hx;
+
+    if (this.moment) {
+      this.playMoment(t, body, ptr, maxSpeed);
+      return;
+    }
 
     if (this.hugging) {
       // Wrap around the cursor and hold on, settling right under it.
@@ -421,6 +463,47 @@ export class Brain {
     // Gentle hands are welcome once it trusts you; fast pokes never are.
     const poke = ptr.speed > 650 || st <= 1;
     if (!it.catchable && poke && dist < R * 2) it.vx -= dir * (1 - dist / (R * 2)) * maxSpeed;
+  }
+
+  /** A stage's one-time moment. */
+  private playMoment(t: number, body: Body, ptr: Pointer, maxSpeed: number): void {
+    const it = this.intent;
+    const R = body.radius;
+    const dx = ptr.x - body.hx;
+    const toward = (standoff: number, speed: number) =>
+      clamp((dx - Math.sign(dx) * Math.min(Math.abs(dx), standoff)) * 3, maxSpeed * speed);
+    this.mood.fear = 0;
+    switch (this.moment!.stage) {
+      case 1:
+        // Curious: comes out of hiding and waves a tendril hello.
+        it.vx = toward(R * 3, 0.5);
+        it.reach = { x: body.hx + Math.sin(t * 7) * R * 1.2, y: body.hy - R * 3.2, tower: false, speed: 2 };
+        break;
+      case 2:
+        // Playful: can't contain itself, hop hop hop.
+        this.mood.joy = 1;
+        it.vx = toward(R * 2.5, 0.4);
+        if (body.grounded && this.hopWait === 0) {
+          it.pounce = R;
+          this.hopWait = 0.45;
+        }
+        break;
+      case 3:
+        // Friendly: its very first hug, offered all on its own.
+        it.hugAt = { x: ptr.x, y: ptr.y };
+        it.vx = toward(R * 1.2, 0.8);
+        this.mood.joy = 1;
+        break;
+      case 4:
+        // Super friendly: a heart, and a bounce of joy.
+        this.mood.joy = 1;
+        it.vx = toward(R * 2.2, 0.5);
+        if (body.grounded && this.hopWait === 0) {
+          it.pounce = R * 0.5;
+          this.hopWait = 0.8;
+        }
+        break;
+    }
   }
 
   /** The cursor just appeared: say hello the way this stage would. */

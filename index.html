@@ -22,6 +22,82 @@
         user-select: none;
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+      }
+      #ui {
+        position: fixed;
+        top: calc(10px + env(safe-area-inset-top, 0px));
+        right: calc(10px + env(safe-area-inset-right, 0px));
+        display: flex;
+        gap: 6px;
+      }
+      #ui button {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: #2a2a2e;
+        opacity: 0.35;
+        cursor: pointer;
+        transition: opacity 0.2s;
+        font: 600 16px/1 system-ui, sans-serif;
+      }
+      #ui button:hover,
+      #ui button:focus-visible,
+      #ui button[aria-pressed='true'] {
+        opacity: 0.8;
+      }
+      #ui button:focus-visible {
+        outline: 2px solid #2a2a2e;
+        outline-offset: 1px;
+      }
+      #ui svg {
+        width: 20px;
+        height: 20px;
+      }
+      #help {
+        position: fixed;
+        top: calc(52px + env(safe-area-inset-top, 0px));
+        right: calc(14px + env(safe-area-inset-right, 0px));
+        max-width: min(300px, calc(100vw - 28px));
+        margin: 0;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(250, 250, 248, 0.92);
+        box-shadow: 0 6px 30px rgba(0, 0, 0, 0.08);
+        color: #4a4a4e;
+        font: 13px/1.55 system-ui, sans-serif;
+        list-style: none;
+      }
+      #help b {
+        color: #1d1d20;
+        font-weight: 600;
+      }
+      #caption {
+        position: fixed;
+        left: 50%;
+        bottom: calc(14vh + env(safe-area-inset-bottom, 0px));
+        transform: translateX(-50%);
+        max-width: calc(100vw - 32px);
+        color: #8a8a86;
+        font: italic 15px/1.4 Georgia, 'Times New Roman', serif;
+        letter-spacing: 0.02em;
+        text-align: center;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 1.2s ease;
+      }
+      #caption.show {
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #caption {
+          transition: none;
+        }
       }
       #fallback {
         position: fixed;
@@ -60,6 +136,25 @@
   <body>
     <canvas id="stage"></canvas>
     <div id="fallback">SymB needs WebGL2 to live here.</div>
+    <div id="ui">
+      <button id="sound" type="button" aria-pressed="false" aria-label="Sound off" title="Sound">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" stroke="none" />
+          <path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" hidden />
+          <path class="off" d="M17 9l5 6M22 9l-5 6" />
+        </svg>
+      </button>
+      <button id="help-toggle" type="button" aria-expanded="false" aria-controls="help" aria-label="How to play" title="How to play">?</button>
+    </div>
+    <ul id="help" hidden>
+      <li><b>Hold still</b> and a shy SymB will come to you.</li>
+      <li><b>Move</b> and, once it trusts you, it will chase you.</li>
+      <li><b>Stroke</b> it slowly to pet it. <b>Circle</b> on it to tickle.</li>
+      <li><b>Tap</b> empty space to feed it. Tap it to boop it.</li>
+      <li><b>Press and hold</b> on it for a hug, when it's ready.</li>
+      <li>It remembers you. Come back often.</li>
+    </ul>
+    <p id="caption" aria-live="polite"></p>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

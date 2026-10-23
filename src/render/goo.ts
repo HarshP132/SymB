@@ -33,6 +33,7 @@ uniform vec4 uEyeB[2]; // tilt, open, happy, lid
 uniform vec2 uEyeC[2]; // lidTilt, side
 uniform vec4 uPrey;    // swallowed cursor: x, y, radius, alpha
 uniform vec4 uSpike;   // spikes: body centre xy, body radius, amount
+uniform float uHeart;  // 0..1: how far the goo has become a heart
 
 out vec4 outColor;
 
@@ -87,6 +88,30 @@ void addSpikes(vec2 p, inout float f, inout vec2 g) {
   }
 }
 
+// Signed distance to a heart with its tip at the origin, lobes up (+y).
+float sdHeart(vec2 p) {
+  p.x = abs(p.x);
+  if (p.y + p.x > 1.0) return length(p - vec2(0.25, 0.75)) - 0.3536;
+  vec2 a = p - vec2(0.0, 1.0);
+  vec2 b = p - 0.5 * max(p.x + p.y, 0.0);
+  return sqrt(min(dot(a, a), dot(b, b))) * sign(p.x - p.y);
+}
+
+// The heart as a field like the goo's: 1 on its outline, rising inside.
+float heartField(vec2 p, out vec2 g) {
+  float S = uSpike.z * 2.2;
+  float w = uSpike.z * 0.1;
+  vec2 c = uSpike.xy;
+  // Screen y points down; the heart's 0..1.1 spans upward from its tip.
+  vec2 hp = vec2((p.x - c.x) / S, 0.55 - (p.y - c.y) / S);
+  float d = sdHeart(hp) * S;
+  float e = 0.002;
+  vec2 grad = vec2(sdHeart(hp + vec2(e, 0.0)) - sdHeart(hp - vec2(e, 0.0)),
+                   -(sdHeart(hp + vec2(0.0, e)) - sdHeart(hp - vec2(0.0, e))));
+  g = -normalize(grad + 1e-6) / w;
+  return max(0.0, 1.0 - d / w);
+}
+
 // Metaball field at p, with its gradient in g. The surface is f = 1.
 float field(vec2 p, out vec2 g) {
   g = vec2(0.0);
@@ -112,6 +137,14 @@ float field(vec2 p, out vec2 g) {
   f -= uFinger.w * 1.2 * k * k;
   g += uFinger.w * 1.2 * 4.0 * k * fd / S;
   addSpikes(p, f, g);
+  if (uHeart > 0.01) {
+    vec2 hg;
+    float hf = heartField(p, hg);
+    // Reach the full heart well before the morph finishes, so it reads crisply.
+    float h = smoothstep(0.0, 0.8, uHeart);
+    f = mix(f, hf, h);
+    g = mix(g, hg, h);
+  }
   return f;
 }
 
@@ -284,6 +317,7 @@ export interface Frame {
   eyes: readonly Eye[];
   prey: { x: number; y: number; r: number; alpha: number };
   spike: { x: number; y: number; r: number; amount: number };
+  heart: number;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   radius: number;
   finger: { x: number; y: number; r: number; strength: number };
@@ -296,7 +330,7 @@ export interface Frame {
 
 const UNIFORMS = [
   'uRes', 'uDpr', 'uCount', 'uBalls', 'uBounds', 'uR', 'uFinger',
-  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC', 'uPrey', 'uSpike',
+  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC', 'uPrey', 'uSpike', 'uHeart',
 ] as const;
 
 export class GooRenderer {
@@ -364,6 +398,7 @@ export class GooRenderer {
     }
     gl.uniform4f(u.uPrey, f.prey.x, f.prey.y, f.prey.r, f.prey.alpha);
     gl.uniform4f(u.uSpike, f.spike.x, f.spike.y, f.spike.r, f.spike.amount);
+    gl.uniform1f(u.uHeart, f.heart);
     gl.uniform4fv(u.uEyeA, this.eyeA);
     gl.uniform4fv(u.uEyeB, this.eyeB);
     gl.uniform2fv(u.uEyeC, this.eyeC);

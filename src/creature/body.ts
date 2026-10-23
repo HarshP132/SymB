@@ -81,12 +81,14 @@ export interface Intent {
   giggle: number;
   /** 0..1: slow, deep sleeping breaths. */
   sleep: number;
+  /** 0..1: reshape into a heart. */
+  heart: number;
 }
 
 export function idleIntent(): Intent {
   return {
     vx: 0, crouch: 0, spikes: 0, reach: null, catchable: false, pounce: 0, hold: 0,
-    hugAt: null, food: null, purr: 0, giggle: 0, sleep: 0,
+    hugAt: null, food: null, purr: 0, giggle: 0, sleep: 0, heart: 0,
   };
 }
 
@@ -129,6 +131,8 @@ export class Body {
   onCatch?: () => void;
   /** Called when a morsel has been swallowed. */
   onEat?: () => void;
+  /** Called the moment the goo closes on the cursor (or grabs a morsel). */
+  onGrab?: (food: boolean) => void;
   /** True while it's wrapped around the cursor in a hug. */
   hugging = false;
   /** Called when it bumps into a wall or the ceiling; strength 0..1. */
@@ -167,6 +171,9 @@ export class Body {
   private purr = 0;
   private giggle = 0;
   private sleep = 0;
+  /** 0..1: how far it has become a heart (drawn crisply by the renderer). */
+  heart = 0;
+  private budWait = 8;
   private readonly bubble: Ball[] = [];
 
   constructor(x: number) {
@@ -253,6 +260,8 @@ export class Body {
     this.purr += (intent.purr - this.purr) * ease;
     this.giggle += (intent.giggle - this.giggle) * ease;
     this.sleep += (intent.sleep - this.sleep) * Math.min(1, dt * 2);
+    this.heart += (intent.heart - this.heart) * Math.min(1, dt * 4);
+    this.bud(dt, R);
     if (this.stretchT >= 0) {
       this.stretchT += dt;
       if (this.stretchT > STRETCH_TIME) this.stretchT = -1;
@@ -291,7 +300,8 @@ export class Body {
     // Rooted while swallowing, or while building a tower.
     if (this.engulf || this.tendril.tower > 0.5) desiredVx *= 0.15;
 
-    let squash = this.crouch * R * 0.5;
+    // As a heart it floats up a little so the tip clears the floor.
+    let squash = this.crouch * R * 0.5 - this.heart * R * 0.35;
     if (ptr.active) {
       const dx = this.hx - ptr.x;
       const dy = this.hy - ptr.y;
@@ -436,8 +446,20 @@ export class Body {
         const ox = p.ox * cs - p.oy * sn;
         const oy = p.ox * sn + p.oy * cs;
         // Gravity settles the shape: a little wider, a little lower.
-        ax = (this.hx + ox * s * wide - p.x) * p.k;
-        ay = (this.hy + oy * s * tall - p.y) * p.k + SAG * R * (1 - st * 0.6);
+        let tx = this.hx + ox * s * wide;
+        let ty = this.hy + oy * s * tall;
+        if (this.heart > 0.01) {
+          // Love: every particle slides to its place on a heart outline
+          // (scaled by how far out it sits), tip pointing at the floor.
+          const th = p.angle;
+          const d = (Math.hypot(p.ox, p.oy) / 0.6) * R * 1.35 * breath;
+          const hx = Math.sin(th) ** 3;
+          const hy = -(13 * Math.cos(th) - 5 * Math.cos(2 * th) - 2 * Math.cos(3 * th) - Math.cos(4 * th)) / 16 - 0.35;
+          tx += (this.hx + hx * d - tx) * this.heart;
+          ty += (this.hy + hy * d - ty) * this.heart;
+        }
+        ax = (tx - p.x) * p.k;
+        ay = (ty - p.y) * p.k + SAG * R * (1 - st * 0.6) * (1 - 0.8 * this.heart);
       }
 
       // Pointer pokes push the goo aside and drag it along.
@@ -516,6 +538,7 @@ export class Body {
     this.prey.x = ptr.x;
     this.prey.y = ptr.y;
     this.prey.alpha = 1;
+    this.onGrab?.(false);
   }
 
   private updateEngulf(dt: number, t: number, R: number): void {
@@ -589,6 +612,30 @@ export class Body {
     const d = Math.hypot(m.x - this.hx, m.y - this.hy);
     // Skip the wrapping: start straight on the way home.
     this.engulf = { age: WRAP_TIME, x: m.x, y: m.y, hold: 0, travel: 0.35 + d / 1400, food: m };
+    this.onGrab?.(true);
+  }
+
+  /** Once it's big, little drops now and then pinch off and float away. */
+  private bud(dt: number, R: number): void {
+    this.budWait -= dt;
+    if (this.budWait > 0 || this.mass < 10 || this.engulf) return;
+    this.budWait = 7 + Math.random() * 7;
+    const drops = this.particles.filter((p) => p.droplet);
+    const p = drops[Math.floor(Math.random() * drops.length)];
+    const a = Math.PI + Math.random() * Math.PI; // somewhere on the upper half
+    p.x = this.hx + Math.cos(a) * R * 0.9;
+    p.y = this.hy + Math.sin(a) * R * 0.9;
+    p.vx = Math.cos(a) * R * 7;
+    p.vy = Math.sin(a) * R * 7;
+  }
+
+  /** Make an entrance: fall from the top of the window and splat. */
+  dropIn(top: number): void {
+    const dy = top + this.radius * 1.6 - this.hy;
+    this.hy += dy;
+    for (const p of this.particles) p.y += dy;
+    this.hvy = 0;
+    this.grounded = false;
   }
 
   /** Wrap around the cursor and hold it, squeezing gently, for as long as it stays. */
