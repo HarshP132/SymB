@@ -131,6 +131,8 @@ export class Body {
   onEat?: () => void;
   /** Called the moment the goo closes on the cursor (or grabs a morsel). */
   onGrab?: (food: boolean) => void;
+  /** Reduced motion: gentler wobbles, ripples and swirling. */
+  calm = false;
   /** True while it's wrapped around the cursor in a hug. */
   hugging = false;
   /** Called when it bumps into a wall or the ceiling; strength 0..1. */
@@ -388,14 +390,17 @@ export class Body {
     // Breathing: slow, slightly irregular swell of the whole body, slower
     // and deeper in its sleep.
     const sl = this.sleep;
+    const calm = this.calm ? 0.4 : 1;
     const breath =
-      1 + (0.035 + 0.035 * sl) * Math.sin(t * (1.6 - 0.85 * sl)) + 0.015 * Math.sin(t * 0.67 + 1.3) + this.gulp * 0.1;
+      1 +
+      ((0.035 + 0.035 * sl) * Math.sin(t * (1.6 - 0.85 * sl)) + 0.015 * Math.sin(t * 0.67 + 1.3) + this.gulp * 0.1) *
+        calm;
     // Waking up: a long, tall stretch.
     const st = this.stretchT >= 0 ? Math.sin((this.stretchT / STRETCH_TIME) * Math.PI) : 0;
     const wide = 1.1 * (1 - st * 0.2);
     const tall = 0.9 * (1 + st * 0.45);
     // The flesh slowly swirls so the silhouette never repeats exactly.
-    const swirl = t * 0.12;
+    const swirl = t * 0.12 * calm;
     const cs = Math.cos(swirl);
     const sn = Math.sin(swirl);
     // Pointer forces were tuned at the starting size; keep them in proportion.
@@ -432,8 +437,8 @@ export class Body {
       } else {
         // Anchor = heart + rotated rest offset + organic wobble, plus the
         // gulp ripple that runs around the body after a catch.
-        const wob = 0.07 * Math.sin(t * (1.1 + p.k * 0.004) + p.phase);
-        const ripple = this.gulp * 0.25 * Math.sin(p.angle * 3 - this.gulpAge * 14);
+        const wob = 0.07 * calm * Math.sin(t * (1.1 + p.k * 0.004) + p.phase);
+        const ripple = this.gulp * 0.25 * calm * Math.sin(p.angle * 3 - this.gulpAge * 14);
         const purr = this.purr * 0.03 * Math.sin(t * 42 + p.phase);
         const giggle = this.giggle * 0.09 * Math.sin(t * 17 + p.angle * 2);
         const s = R * breath * (1 + wob + ripple + purr + giggle);

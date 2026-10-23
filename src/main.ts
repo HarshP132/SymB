@@ -3,6 +3,7 @@ import { Brain, STAGES, STAGE_AT } from './creature/brain';
 import { Face, type Eye, type Expression } from './creature/face';
 import { Input, type Pointer } from './input';
 import { GooRenderer, type Frame } from './render/goo';
+import { FallbackRenderer } from './render/fallback';
 import { Camera } from './world/camera';
 import { Pantry } from './world/food';
 import { forget, load, save } from './save';
@@ -11,24 +12,44 @@ import { Sound } from './audio';
 const STEP = 1 / 120; // fixed physics step
 const MAX_STEPS = 8;
 
-const canvas = document.getElementById('stage') as HTMLCanvasElement;
-// Debug tools: add ?debug or #debug to the URL.
-const debug = new URLSearchParams(location.search).has('debug') || location.hash === '#debug';
+let canvas = document.getElementById('stage') as HTMLCanvasElement;
+const params = new URLSearchParams(location.search);
+// Debug tools: add ?debug or #debug to the URL. ?nogl forces the 2D fallback.
+const debug = params.has('debug') || location.hash === '#debug';
 
-let renderer: GooRenderer;
-try {
-  renderer = new GooRenderer(canvas);
-} catch (err) {
-  console.error(err);
-  document.getElementById('fallback')!.style.display = 'flex';
-  throw err;
+interface Renderer {
+  render(f: Frame, dpr: number): void;
+}
+let renderer!: Renderer;
+let useFallback = params.has('nogl');
+if (!useFallback) {
+  try {
+    renderer = new GooRenderer(canvas);
+  } catch (err) {
+    console.warn('WebGL2 unavailable; using the 2D fallback.', err);
+    useFallback = true;
+    // A canvas that already handed out a WebGL context can't give a 2D one.
+    const fresh = canvas.cloneNode() as HTMLCanvasElement;
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+}
+if (useFallback) {
+  try {
+    renderer = new FallbackRenderer(canvas);
+  } catch (err) {
+    document.getElementById('fallback')!.style.display = 'flex';
+    throw err;
+  }
 }
 
 const camera = new Camera();
 let dpr = 1;
+/** Render resolution relative to the screen; lowered on slow devices. */
+let quality = 1;
 function resize(): void {
   // Capped so huge phone DPRs don't melt the fragment shader.
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dpr = Math.min(window.devicePixelRatio || 1, 2) * quality;
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   camera.resize(window.innerWidth, window.innerHeight);
@@ -38,6 +59,10 @@ window.addEventListener('resize', resize);
 
 const input = new Input(canvas);
 const body = new Body(0);
+// Calmer wobbles for people who ask their device for less motion.
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+body.calm = reducedMotion.matches;
+reducedMotion.addEventListener('change', () => (body.calm = reducedMotion.matches));
 const face = new Face();
 const brain = new Brain();
 const pantry = new Pantry();
@@ -172,7 +197,7 @@ function buildFrame(time: number): Frame {
   f.contact.strength = body.contact.strength;
   f.camX = camera.x;
   f.zoom = z;
-  f.time = time;
+  f.time = body.calm ? time * 0.3 : time;
   return f;
 }
 
@@ -280,6 +305,31 @@ let fpsFrames = 0;
 let fpsTime = 0;
 let fps = 0;
 
+// Keep the frame rate up by trading resolution for speed, and back again.
+let perfTime = 0;
+let perfFrames = 0;
+let fastSeconds = 0;
+function adaptQuality(elapsed: number): void {
+  perfTime += elapsed;
+  perfFrames++;
+  if (perfTime < 1) return;
+  const avg = perfTime / perfFrames;
+  perfTime = perfFrames = 0;
+  if (avg > 1 / 45 && quality > 0.5) {
+    quality = Math.max(0.5, quality - 0.15);
+    fastSeconds = 0;
+    resize();
+  } else if (avg < 1 / 55 && quality < 1) {
+    if (++fastSeconds >= 3) {
+      quality = Math.min(1, quality + 0.1);
+      fastSeconds = 0;
+      resize();
+    }
+  } else {
+    fastSeconds = 0;
+  }
+}
+
 function frame(now: number): void {
   const elapsed = Math.min((now - last) / 1000, 0.1);
   last = now;
@@ -303,6 +353,7 @@ function frame(now: number): void {
   if (steps === MAX_STEPS) acc = 0;
 
   renderer.render(buildFrame(time), dpr);
+  adaptQuality(elapsed);
   // While it's swallowing your cursor, your cursor is gone.
   sound.setPurr(brain.mood.content);
   const cursor = body.holdingCursor ? 'none' : '';
@@ -319,7 +370,7 @@ function frame(now: number): void {
     debugEl.textContent =
       `${brain.stageName} · bond ${brain.bond.toFixed(1)} · ` +
       Object.entries(brain.mood).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(' ') + '\n' +
-      `${fps.toFixed(0)} fps · dpr ${dpr}\n` +
+      `${fps.toFixed(0)} fps · dpr ${dpr.toFixed(2)} · ${useFallback ? '2D fallback' : 'WebGL2'}\n` +
       `mass ${body.mass} · catches ${body.catches} · radius ${body.radius.toFixed(1)}px · zoom ${camera.zoom.toFixed(2)}\n` +
       `g / G grow · r reset size · R start over · [ ] bond ±5 · 1–4 face (curious, happy, scared, sleepy) · 0 auto`;
     if (bondSlider && document.activeElement !== bondSlider) bondSlider.value = String(brain.bond);
@@ -331,6 +382,7 @@ function frame(now: number): void {
 document.addEventListener('visibilitychange', () => {
   // Don't let a hidden tab come back to one giant catch-up step.
   last = performance.now();
+  perfTime = perfFrames = 0;
 });
 
 requestAnimationFrame(frame);

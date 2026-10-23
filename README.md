@@ -26,4 +26,14 @@ npm run dev:phone    # also serves on your Wi-Fi; open the "Network" URL on your
 npm run build        # typecheck + production build into dist/
 ```
 
+## Publish (GitHub Pages)
+
+`.github/workflows/pages.yml` builds every push and publishes the default branch to GitHub Pages. One-time setup: in the repository's **Settings → Pages**, set **Source** to **GitHub Actions**. SymB then lives at `https://<user>.github.io/SymB/`. (`dist/` is a plain static site, so any static host works too.)
+
+## Under the hood
+
+- WebGL2 metaball shader; devices without WebGL2 get a Canvas 2D fallback (force it with `?nogl`).
+- Render resolution adapts to keep the frame rate up on slower devices.
+- Respects *reduce motion*: wobbles, ripples and drifting dust calm down.
+
 Add `?debug` (or `#debug`) to the URL for an FPS readout. In debug mode, `g` grows SymB by 1 mass, `G` by 25, and `r` resets it. `Shift+R` starts over with a brand-new shy SymB, `[` / `]` change bond by 5, and a slider at the bottom jumps between personality stages. Keys `1`–`4` preview expressions (curious, happy, scared, sleepy) and `0` returns to automatic.

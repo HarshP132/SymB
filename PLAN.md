@@ -159,7 +159,7 @@ Each milestone ends with something you can open in a browser and react to before
 | **M4** ✅ | The Brain | Emotions + bond + 5 stages. Shy hiding/fleeing, stillness trust, pounce, orbit, startle spikes. Debug panel with a bond slider to preview every stage. *Checkpoint: personality review.* | L |
 | **M5** ✅ | Living with it | Petting, tickle, feeding by click, hug, sleep/wake, leave/return greetings, persistence. | M |
 | **M6** ✅ | Delight pass | Budding droplets, stage-transition "moments", procedural audio, touch support. | M |
-| **M7** | Polish & ship | Tuning pacing/feel, performance on mobile, reduced motion, WebGL fallback, final deploy. | S |
+| **M7** ✅ | Polish & ship | Tuning pacing/feel, performance on mobile, reduced motion, WebGL fallback, final deploy. | S |
 
 **Riskiest part first:** M1 (goo rendering) and M4 (believable personality) carry most of the "immersive" risk, so each gets an explicit review checkpoint.
 
