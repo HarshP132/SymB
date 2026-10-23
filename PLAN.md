@@ -148,9 +148,9 @@ Each milestone ends with something you can open in a browser and react to before
 
 | # | Milestone | Deliverable / checkpoint | Size |
 |---|---|---|---|
-| **M0** | Scaffold | Vite + TS project, full-screen canvas, game loop, DPR handling, deploy pipeline. | S |
-| **M1** | The Goo | Metaball shader with a breathing, wobbling blob made of particles. *Checkpoint: "does it look alive?"* | M |
-| **M2** | Follow & Catch | Steering toward the cursor, tendril reach, catch detection, gulp ripple, growth curve, camera follow/zoom, parallax dust void. | M |
+| **M0** ✅ | Scaffold | Vite + TS project, full-screen canvas, game loop, DPR handling, deploy pipeline. | S |
+| **M1** ✅ | The Goo | Metaball shader with a breathing, wobbling blob made of particles. *Checkpoint: "does it look alive?"* | M |
+| **M2** ✅ | Follow & Catch | Steering toward the cursor, tendril reach, catch detection, gulp ripple, growth curve, camera follow/zoom, parallax dust void. | M |
 | **M3** | The Face | Eyes with blinking, look-at-cursor, squash, and an expression set (curious, happy, scared, sleepy). | S |
 | **M4** | The Brain | Emotions + bond + 5 stages. Shy hiding/fleeing, stillness trust, pounce, orbit, startle spikes. Debug panel with a bond slider to preview every stage. *Checkpoint: personality review.* | L |
 | **M5** | Living with it | Petting, tickle, feeding by click, hug, sleep/wake, leave/return greetings, persistence. | M |

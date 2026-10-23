@@ -18,12 +18,15 @@ precision highp float;
 uniform vec2 uRes;      // canvas size, device px
 uniform float uDpr;
 uniform int uCount;
-uniform vec4 uBalls[MAX_BALLS]; // xy center, z radius (css px)
+uniform vec4 uBalls[MAX_BALLS]; // xy center, z radius (css px), w 1 = sharp falloff
 uniform vec4 uBounds;   // minX, minY, maxX, maxY (css px)
 uniform float uR;       // body radius (css px), for scale-free shading
 uniform vec4 uFinger;   // pointer dent: xy, radius, strength
 uniform float uFloor;   // floor line, css px from the top
-uniform vec2 uContact;  // centre x and half-width of the part touching the floor
+uniform vec3 uContact;  // centre x, half-width and strength of the floor contact
+uniform float uCamX;    // camera x in world px, for dust parallax
+uniform float uZoom;
+uniform float uTime;
 
 out vec4 outColor;
 
@@ -43,8 +46,13 @@ float field(vec2 p, out vec2 g) {
     vec2 d = p - uBalls[i].xy;
     float dd = dot(d, d) + 1e-3;
     float v = uBalls[i].z * uBalls[i].z / dd;
-    f += v;
-    g -= 2.0 * v * d / dd; // gradient of r²/d²
+    if (uBalls[i].w > 0.5) {
+      f += v * v;
+      g -= 4.0 * v * v * d / dd; // gradient of (r²/d²)²
+    } else {
+      f += v;
+      g -= 2.0 * v * d / dd; // gradient of r²/d²
+    }
   }
   // The pointer carves a smooth, finite dent: f -= s·(1 - d²/S)².
   vec2 fd = p - uFinger.xy;
@@ -53,6 +61,30 @@ float field(vec2 p, out vec2 g) {
   f -= uFinger.w * 1.2 * k * k;
   g += uFinger.w * 1.2 * 4.0 * k * fd / S;
   return f;
+}
+
+// Sparse dust drifting through the void in three parallax layers. Near
+// layers pan with the camera and shrink as it zooms out to fit SymB, so
+// the specks keep telling you how big SymB has become.
+float dust(vec2 p, float viewW) {
+  float a = 0.0;
+  for (int i = 0; i < 3; i++) {
+    float l = float(i);
+    float par = 0.35 + 0.3 * l;
+    float zl = pow(uZoom, par);
+    float cell = 70.0 + 45.0 * l;
+    vec2 q = vec2((p.x - 0.5 * viewW) / zl + uCamX * par, (p.y - uFloor) / zl);
+    q += vec2(uTime * (3.0 + 2.0 * l), -uTime * (1.5 + l)) + l * 137.0;
+    vec2 id = floor(q / cell);
+    float h = hash(id + l * 17.0);
+    if (h > 0.45) continue;
+    vec2 c = (0.2 + 0.6 * vec2(hash(id + 3.1), hash(id + 7.7))) * cell;
+    float r = (0.8 + 1.6 * hash(id + 11.3)) * zl * (0.7 + 0.3 * l);
+    float d = length(q - id * cell - c) * zl;
+    float twinkle = 0.75 + 0.25 * sin(uTime * 0.9 + h * 40.0);
+    a += (0.18 + 0.14 * l) * twinkle * (1.0 - smoothstep(r - 0.6, r + 0.6, d));
+  }
+  return a;
 }
 
 // Anti-aliased coverage of the surface, from an approximate distance.
@@ -74,6 +106,8 @@ void main() {
   vec3 ground = mix(vec3(0.950, 0.950, 0.942), vec3(0.972, 0.972, 0.964), depth);
   float below = smoothstep(uFloor - 0.75, uFloor + 0.75, p.y);
   vec3 bg = mix(sky, ground, below);
+  bg = mix(bg, vec3(0.62, 0.62, 0.6), dust(p, uRes.x / uDpr) * (1.0 - below)
+      * smoothstep(0.0, 24.0, uFloor - p.y));
   bg *= 1.0 - 0.05 * smoothstep(0.35, 0.95, length(uv - 0.5));
   bg += (hash(frag) - 0.5) * 0.012;
 
@@ -88,7 +122,8 @@ void main() {
   float dyF = p.y - uFloor;
   float pool = exp(-(cx * cx * 1.2 + pow(dyF / (uR * 0.45), 2.0)));
   float tight = exp(-(cx * cx * 2.5 + pow(dyF / (uR * 0.1), 2.0)));
-  bg *= 1.0 - (0.22 * pool + 0.35 * tight) * smoothstep(-uR * 0.2, 0.0, dyF);
+  float cs = uContact.z;
+  bg *= 1.0 - (0.22 * pool * cs + 0.35 * tight * cs * cs * cs) * smoothstep(-uR * 0.2, 0.0, dyF);
 
   // Glossy floor: a faded mirror image of the goo.
   if (dyF > 0.0) {
@@ -135,17 +170,27 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
+/** Everything the renderer needs for one frame, in screen (css px) space. */
+export interface Frame {
+  balls: readonly Ball[];
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  radius: number;
+  finger: { x: number; y: number; r: number; strength: number };
+  floorY: number;
+  contact: { x: number; halfWidth: number; strength: number };
+  camX: number;
+  zoom: number;
+  time: number;
+}
+
+const UNIFORMS = [
+  'uRes', 'uDpr', 'uCount', 'uBalls', 'uBounds', 'uR', 'uFinger',
+  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime',
+] as const;
+
 export class GooRenderer {
   private gl: WebGL2RenderingContext;
-  private uRes: WebGLUniformLocation | null;
-  private uDpr: WebGLUniformLocation | null;
-  private uCount: WebGLUniformLocation | null;
-  private uBalls: WebGLUniformLocation | null;
-  private uBounds: WebGLUniformLocation | null;
-  private uR: WebGLUniformLocation | null;
-  private uFinger: WebGLUniformLocation | null;
-  private uFloor: WebGLUniformLocation | null;
-  private uContact: WebGLUniformLocation | null;
+  private u = {} as Record<(typeof UNIFORMS)[number], WebGLUniformLocation | null>;
   private ballData = new Float32Array(MAX_BALLS * 4);
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -170,44 +215,33 @@ export class GooRenderer {
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-    this.uRes = gl.getUniformLocation(prog, 'uRes');
-    this.uDpr = gl.getUniformLocation(prog, 'uDpr');
-    this.uCount = gl.getUniformLocation(prog, 'uCount');
-    this.uBalls = gl.getUniformLocation(prog, 'uBalls');
-    this.uBounds = gl.getUniformLocation(prog, 'uBounds');
-    this.uR = gl.getUniformLocation(prog, 'uR');
-    this.uFinger = gl.getUniformLocation(prog, 'uFinger');
-    this.uFloor = gl.getUniformLocation(prog, 'uFloor');
-    this.uContact = gl.getUniformLocation(prog, 'uContact');
+    for (const name of UNIFORMS) this.u[name] = gl.getUniformLocation(prog, name);
   }
 
-  render(
-    balls: readonly Ball[],
-    bounds: { minX: number; minY: number; maxX: number; maxY: number },
-    radius: number,
-    finger: { x: number; y: number; r: number; strength: number },
-    floorY: number,
-    contact: { x: number; halfWidth: number },
-    dpr: number,
-  ): void {
+  render(f: Frame, dpr: number): void {
     const gl = this.gl;
-    const n = Math.min(balls.length, MAX_BALLS);
+    const u = this.u;
+    const n = Math.min(f.balls.length, MAX_BALLS);
     for (let i = 0; i < n; i++) {
-      const b = balls[i];
+      const b = f.balls[i];
       this.ballData[i * 4] = b.x;
       this.ballData[i * 4 + 1] = b.y;
       this.ballData[i * 4 + 2] = b.r;
+      this.ballData[i * 4 + 3] = b.sharp ? 1 : 0;
     }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.uniform2f(this.uRes, this.canvas.width, this.canvas.height);
-    gl.uniform1f(this.uDpr, dpr);
-    gl.uniform1i(this.uCount, n);
-    gl.uniform4fv(this.uBalls, this.ballData);
-    gl.uniform4f(this.uBounds, bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-    gl.uniform1f(this.uR, radius);
-    gl.uniform4f(this.uFinger, finger.x, finger.y, finger.r, finger.strength);
-    gl.uniform1f(this.uFloor, floorY);
-    gl.uniform2f(this.uContact, contact.x, contact.halfWidth);
+    gl.uniform2f(u.uRes, this.canvas.width, this.canvas.height);
+    gl.uniform1f(u.uDpr, dpr);
+    gl.uniform1i(u.uCount, n);
+    gl.uniform4fv(u.uBalls, this.ballData);
+    gl.uniform4f(u.uBounds, f.bounds.minX, f.bounds.minY, f.bounds.maxX, f.bounds.maxY);
+    gl.uniform1f(u.uR, f.radius);
+    gl.uniform4f(u.uFinger, f.finger.x, f.finger.y, f.finger.r, f.finger.strength);
+    gl.uniform1f(u.uFloor, f.floorY);
+    gl.uniform3f(u.uContact, f.contact.x, f.contact.halfWidth, f.contact.strength);
+    gl.uniform1f(u.uCamX, f.camX);
+    gl.uniform1f(u.uZoom, f.zoom);
+    gl.uniform1f(u.uTime, f.time);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }

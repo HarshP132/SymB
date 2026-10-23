@@ -1,12 +1,22 @@
 // Unified pointer tracking for mouse, pen and touch.
 // A touch only counts as a "cursor" while the finger is on the screen.
 
-export class Input {
+/** What SymB can know about the cursor, in whichever space it lives in. */
+export interface Pointer {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  speed: number;
+  /** True while there is a cursor/finger SymB can see. */
+  active: boolean;
+}
+
+export class Input implements Pointer {
   x = 0;
   y = 0;
   vx = 0;
   vy = 0;
-  /** True while there is a cursor/finger SymB can see. */
   active = false;
   down = false;
   /** Seconds since the pointer last moved. */
