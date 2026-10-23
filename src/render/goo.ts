@@ -22,49 +22,86 @@ uniform vec4 uBalls[MAX_BALLS]; // xy center, z radius (css px)
 uniform vec4 uBounds;   // minX, minY, maxX, maxY (css px)
 uniform float uR;       // body radius (css px), for scale-free shading
 uniform vec4 uFinger;   // pointer dent: xy, radius, strength
+uniform float uFloor;   // floor line, css px from the top
+uniform vec2 uContact;  // centre x and half-width of the part touching the floor
 
 out vec4 outColor;
 
+const vec3 INK = vec3(0.028, 0.028, 0.036);
+
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Metaball field at p, with its gradient in g. The surface is f = 1.
+float field(vec2 p, out vec2 g) {
+  g = vec2(0.0);
+  if (p.x < uBounds.x || p.y < uBounds.y || p.x > uBounds.z || p.y > uBounds.w) return 0.0;
+  float f = 0.0;
+  for (int i = 0; i < MAX_BALLS; i++) {
+    if (i >= uCount) break;
+    vec2 d = p - uBalls[i].xy;
+    float dd = dot(d, d) + 1e-3;
+    float v = uBalls[i].z * uBalls[i].z / dd;
+    f += v;
+    g -= 2.0 * v * d / dd; // gradient of r²/d²
+  }
+  // The pointer carves a smooth, finite dent: f -= s·(1 - d²/S)².
+  vec2 fd = p - uFinger.xy;
+  float S = 4.0 * uFinger.z * uFinger.z;
+  float k = max(0.0, 1.0 - dot(fd, fd) / S);
+  f -= uFinger.w * 1.2 * k * k;
+  g += uFinger.w * 1.2 * 4.0 * k * fd / S;
+  return f;
+}
+
+// Anti-aliased coverage of the surface, from an approximate distance.
+float coverage(float f, vec2 g) {
+  float sd = (f - 1.0) / max(length(g), 1e-4);
+  float a = clamp(sd * uDpr + 0.5, 0.0, 1.0);
+  return max(a, smoothstep(1.3, 1.6, f)); // sd is unreliable deep inside
 }
 
 void main() {
   vec2 frag = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
   vec2 p = frag / uDpr;
   vec2 uv = frag / uRes;
+  float viewH = uRes.y / uDpr;
 
-  // The void: warm off-white, a whisper of vignette and grain.
-  vec3 bg = vec3(0.980, 0.980, 0.972);
+  // The void above, a pale endless floor below, joined by a soft horizon.
+  vec3 sky = vec3(0.980, 0.980, 0.972);
+  float depth = clamp((p.y - uFloor) / max(viewH - uFloor, 1.0), 0.0, 1.0);
+  vec3 ground = mix(vec3(0.950, 0.950, 0.942), vec3(0.972, 0.972, 0.964), depth);
+  float below = smoothstep(uFloor - 0.75, uFloor + 0.75, p.y);
+  vec3 bg = mix(sky, ground, below);
   bg *= 1.0 - 0.05 * smoothstep(0.35, 0.95, length(uv - 0.5));
   bg += (hash(frag) - 0.5) * 0.012;
 
-  float f = 0.0;
-  vec2 g = vec2(0.0);
-  if (p.x > uBounds.x && p.y > uBounds.y && p.x < uBounds.z && p.y < uBounds.w) {
-    for (int i = 0; i < MAX_BALLS; i++) {
-      if (i >= uCount) break;
-      vec2 d = p - uBalls[i].xy;
-      float dd = dot(d, d) + 1e-3;
-      float v = uBalls[i].z * uBalls[i].z / dd;
-      f += v;
-      g -= 2.0 * v * d / dd; // gradient of r²/d²
-    }
-    // The pointer carves a smooth, finite dent: f -= s·(1 - d²/S)².
-    vec2 fd = p - uFinger.xy;
-    float S = 4.0 * uFinger.z * uFinger.z;
-    float k = max(0.0, 1.0 - dot(fd, fd) / S);
-    f -= uFinger.w * 1.2 * k * k;
-    g += uFinger.w * 1.2 * 4.0 * k * fd / S;
+  vec2 g;
+  float f = field(p, g);
+
+  // Soft ambient shadow so the goo sits in the void, not on top of it.
+  bg *= 1.0 - 0.09 * smoothstep(0.35, 1.0, f) * (1.0 - below);
+
+  // Contact shadow: a broad soft pool plus a tight dark line where it touches.
+  float cx = (p.x - uContact.x) / max(uContact.y, 1.0);
+  float dyF = p.y - uFloor;
+  float pool = exp(-(cx * cx * 1.2 + pow(dyF / (uR * 0.45), 2.0)));
+  float tight = exp(-(cx * cx * 2.5 + pow(dyF / (uR * 0.1), 2.0)));
+  bg *= 1.0 - (0.22 * pool + 0.35 * tight) * smoothstep(-uR * 0.2, 0.0, dyF);
+
+  // Glossy floor: a faded mirror image of the goo.
+  if (dyF > 0.0) {
+    vec2 gr;
+    float fr = field(vec2(p.x, 2.0 * uFloor - p.y), gr);
+    float fade = exp(-dyF / (uR * 0.6));
+    bg = mix(bg, INK, coverage(fr, gr) * 0.16 * fade);
   }
 
-  // Soft ambient shadow so the goo sits *in* the void, not on top of it.
-  bg *= 1.0 - 0.09 * smoothstep(0.35, 1.0, f);
-
+  // The goo itself, cut flat where it rests on the floor.
   float gl = max(length(g), 1e-4);
   float sd = (f - 1.0) / gl; // approx. distance inside the surface, css px
-  float alpha = clamp(sd * uDpr + 0.5, 0.0, 1.0);
-  alpha = max(alpha, smoothstep(1.3, 1.6, f)); // sd is unreliable deep inside
+  float alpha = coverage(f, g) * (1.0 - below);
 
   // Fake a glossy dome: normals tilt outward near the edge.
   vec2 outward = -g / gl;
@@ -79,9 +116,10 @@ void main() {
   float spec = pow(nh, 70.0) * 0.85 + pow(nh, 10.0) * 0.05;
   // A black gloss in a white world reflects white at grazing angles.
   float fres = pow(1.0 - n.z, 3.0) * 0.32;
+  // The pale floor bounces a little light onto the underside.
+  float bounce = smoothstep(uFloor - uR * 0.6, uFloor, p.y) * 0.05;
 
-  vec3 ink = vec3(0.028, 0.028, 0.036);
-  vec3 col = ink + vec3(spec) + vec3(fres) * vec3(0.93, 0.93, 0.95);
+  vec3 col = INK + vec3(spec) + vec3(fres) * vec3(0.93, 0.93, 0.95) + vec3(bounce);
 
   outColor = vec4(mix(bg, col, alpha), 1.0);
 }
@@ -106,6 +144,8 @@ export class GooRenderer {
   private uBounds: WebGLUniformLocation | null;
   private uR: WebGLUniformLocation | null;
   private uFinger: WebGLUniformLocation | null;
+  private uFloor: WebGLUniformLocation | null;
+  private uContact: WebGLUniformLocation | null;
   private ballData = new Float32Array(MAX_BALLS * 4);
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -137,6 +177,8 @@ export class GooRenderer {
     this.uBounds = gl.getUniformLocation(prog, 'uBounds');
     this.uR = gl.getUniformLocation(prog, 'uR');
     this.uFinger = gl.getUniformLocation(prog, 'uFinger');
+    this.uFloor = gl.getUniformLocation(prog, 'uFloor');
+    this.uContact = gl.getUniformLocation(prog, 'uContact');
   }
 
   render(
@@ -144,6 +186,8 @@ export class GooRenderer {
     bounds: { minX: number; minY: number; maxX: number; maxY: number },
     radius: number,
     finger: { x: number; y: number; r: number; strength: number },
+    floorY: number,
+    contact: { x: number; halfWidth: number },
     dpr: number,
   ): void {
     const gl = this.gl;
@@ -162,6 +206,8 @@ export class GooRenderer {
     gl.uniform4f(this.uBounds, bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
     gl.uniform1f(this.uR, radius);
     gl.uniform4f(this.uFinger, finger.x, finger.y, finger.r, finger.strength);
+    gl.uniform1f(this.uFloor, floorY);
+    gl.uniform2f(this.uContact, contact.x, contact.halfWidth);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }

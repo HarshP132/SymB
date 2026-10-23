@@ -21,11 +21,14 @@ try {
 let dpr = 1;
 let viewW = 0;
 let viewH = 0;
+let floorY = 0;
 function resize(): void {
   // Capped so huge phone DPRs don't melt the fragment shader.
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   viewW = window.innerWidth;
   viewH = window.innerHeight;
+  // The ground sits a little below the middle, leaving room to play above it.
+  floorY = Math.round(viewH * 0.68);
   canvas.width = Math.round(viewW * dpr);
   canvas.height = Math.round(viewH * dpr);
 }
@@ -33,7 +36,7 @@ resize();
 window.addEventListener('resize', resize);
 
 const input = new Input(canvas);
-const body = new Body(viewW / 2, viewH / 2);
+const body = new Body(viewW / 2, floorY - 40);
 
 let debugEl: HTMLElement | null = null;
 if (debug) {
@@ -62,14 +65,14 @@ function frame(now: number): void {
   let steps = 0;
   while (acc >= STEP && steps < MAX_STEPS) {
     input.update(STEP);
-    body.update(STEP, time, input, viewW, viewH);
+    body.update(STEP, time, input, viewW, floorY);
     time += STEP;
     acc -= STEP;
     steps++;
   }
   if (steps === MAX_STEPS) acc = 0;
 
-  renderer.render(body.balls, body.bounds, body.radius, body.finger, dpr);
+  renderer.render(body.balls, body.bounds, body.radius, body.finger, floorY, body.contact, dpr);
 
   if (debugEl) {
     fpsFrames++;

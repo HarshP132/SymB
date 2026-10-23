@@ -32,6 +32,12 @@ const BASE_RADIUS = 26;
 const GROWTH = 0.35;
 
 const TAU = Math.PI * 2;
+/** Gravity on the flesh, in body radii/s²: enough to sag into a dome. */
+const SAG = 26;
+/** Gravity on loose droplets, in body radii/s²: they fall and roll home. */
+const DROP_FALL = 30;
+/** Resting height of the heart above the floor, in body radii. */
+const REST_HEIGHT = 1.25;
 
 export class Body {
   hx: number;
@@ -44,6 +50,8 @@ export class Body {
   readonly particles: Particle[] = [];
   readonly balls: Ball[] = [];
   readonly bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  /** The stretch of floor the body is touching, for the contact shadow. */
+  readonly contact = { x: 0, halfWidth: 0 };
 
   private wanderSeed = Math.random() * 100;
 
@@ -96,9 +104,9 @@ export class Body {
     }
   }
 
-  update(dt: number, t: number, input: Input, viewW: number, viewH: number): void {
+  update(dt: number, t: number, input: Input, viewW: number, floorY: number): void {
     const R = this.radius;
-    this.moveHeart(dt, t, input, viewW, viewH);
+    this.moveHeart(dt, t, input, viewW, floorY);
 
     // Breathing: slow, slightly irregular swell of the whole body.
     const breath = 1 + 0.035 * Math.sin(t * 1.6) + 0.015 * Math.sin(t * 0.67 + 1.3);
@@ -120,7 +128,7 @@ export class Body {
         const pull = (d - want) * p.k;
         const orbit = R * 5;
         ax = (-dx / d) * pull - (dy / d) * orbit;
-        ay = (-dy / d) * pull + (dx / d) * orbit;
+        ay = (-dy / d) * pull + (dx / d) * orbit + DROP_FALL * R;
         // Droplets shy away from each other so they don't clump.
         for (const q of this.particles) {
           if (q === p || !q.droplet) continue;
@@ -139,8 +147,9 @@ export class Body {
         const s = R * breath * (1 + wob);
         const ox = p.ox * cs - p.oy * sn;
         const oy = p.ox * sn + p.oy * cs;
-        ax = (this.hx + ox * s - p.x) * p.k;
-        ay = (this.hy + oy * s - p.y) * p.k;
+        // Gravity settles the shape: a little wider, a little lower.
+        ax = (this.hx + ox * s * 1.1 - p.x) * p.k;
+        ay = (this.hy + oy * s * 0.9 - p.y) * p.k + SAG * R;
       }
 
       // Pointer pokes push the goo aside and drag it along.
@@ -164,6 +173,14 @@ export class Body {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
+      // The floor: goo can't pass it, so the underside flattens and spreads.
+      const lowest = floorY - p.r * R * 1.25;
+      if (p.y > lowest) {
+        p.y = lowest;
+        if (p.vy > 0) p.vy *= -0.1;
+        p.vx *= Math.exp(-dt * 10); // sticky friction
+      }
+
       // The finger is solid: goo can't sit inside it, so it visibly dents.
       if (input.active) {
         const dx = p.x - input.x;
@@ -180,7 +197,7 @@ export class Body {
 
     this.updateFinger(dt, input);
 
-    this.collectBalls(R);
+    this.collectBalls(R, floorY);
   }
 
   get fingerRadius(): number {
@@ -198,37 +215,41 @@ export class Body {
     f.r = this.fingerRadius;
   }
 
-  private moveHeart(dt: number, t: number, input: Input, viewW: number, viewH: number): void {
-    // Idle drift around the middle of the screen, steered by layered sines.
+  private moveHeart(dt: number, t: number, input: Input, viewW: number, floorY: number): void {
+    const R = this.radius;
+    // Idle wandering along the floor, steered by layered sines.
     const s = this.wanderSeed;
-    const amp = Math.min(viewW, viewH) * 0.12;
-    let tx = viewW / 2 + amp * (Math.sin(t * 0.21 + s) + 0.5 * Math.sin(t * 0.53 + s * 2));
-    let ty = viewH / 2 + amp * 0.7 * (Math.sin(t * 0.17 + s * 3) + 0.5 * Math.sin(t * 0.41 + s));
+    const amp = viewW * 0.22;
+    let tx = viewW / 2 + amp * (Math.sin(t * 0.21 + s) + 0.5 * Math.sin(t * 0.53 + s * 2)) / 1.5;
+    const restY = floorY - R * REST_HEIGHT;
+    let ty = restY;
 
-    // Shrink away a little when poked in the middle.
     if (input.active) {
       const dx = this.hx - input.x;
       const dy = this.hy - input.y;
       const d = Math.hypot(dx, dy) + 1e-3;
-      const R = this.radius;
       if (d < R * 2) {
-        const f = (1 - d / (R * 2)) * R * 1.6;
-        tx += (dx / d) * f;
-        ty += (dy / d) * f;
+        const near = 1 - d / (R * 2);
+        // Scoot sideways away from a poke...
+        tx += Math.sign(dx || 1) * near * R * 1.6;
+        // ...and squash down when pressed from above.
+        if (dy > 0) ty += near * R * 0.45;
       }
     }
 
-    const k = 3;
-    this.hvx = (this.hvx + (tx - this.hx) * k * dt) * Math.exp(-dt * 2.2);
-    this.hvy = (this.hvy + (ty - this.hy) * k * dt) * Math.exp(-dt * 2.2);
+    // Soft horizontally, firmer vertically so it settles onto the floor.
+    this.hvx = (this.hvx + (tx - this.hx) * 3 * dt) * Math.exp(-dt * 2.2);
+    this.hvy = (this.hvy + (ty - this.hy) * 40 * dt) * Math.exp(-dt * 8);
     this.hx += this.hvx * dt;
     this.hy += this.hvy * dt;
   }
 
-  private collectBalls(R: number): void {
+  private collectBalls(R: number, floorY: number): void {
     const b = this.bounds;
     b.minX = b.minY = Infinity;
     b.maxX = b.maxY = -Infinity;
+    let cMin = Infinity;
+    let cMax = -Infinity;
     this.balls.length = 0;
     for (const p of this.particles) {
       const r = p.r * R;
@@ -237,7 +258,18 @@ export class Body {
       b.minY = Math.min(b.minY, p.y - r);
       b.maxX = Math.max(b.maxX, p.x + r);
       b.maxY = Math.max(b.maxY, p.y + r);
+      if (p.y > floorY - R * 0.9) {
+        cMin = Math.min(cMin, p.x - r);
+        cMax = Math.max(cMax, p.x + r);
+      }
     }
+    if (cMin > cMax) {
+      // Lifted off the floor entirely: shadow sits under the heart.
+      cMin = this.hx - R * 0.5;
+      cMax = this.hx + R * 0.5;
+    }
+    this.contact.x = (cMin + cMax) / 2;
+    this.contact.halfWidth = (cMax - cMin) / 2;
     // Leave room for the soft halo the shader draws around the goo.
     const m = R * 2.4;
     b.minX -= m;

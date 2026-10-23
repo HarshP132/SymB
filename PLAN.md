@@ -15,6 +15,7 @@ It isn't a game. There is no score, no level, no UI to manage. It's a small livi
 
 **Look & feel**
 
+- **Floor:** SymB lives on an endless pale floor a little below the middle of the screen. Gravity makes it settle into a soft dome with a flat base, and loose droplets fall and roll back to it. The glossy floor shows a faded reflection and a soft contact shadow. Later jumps and pounces leave the floor and land back on it.
 - **Space:** pure off-white void (`#FAFAF8`). Faint grey dust specks drift in parallax layers so you sense depth and motion, and the camera follows SymB softly, so the space never ends.
 - **Creature:** glossy ink-black goo made of metaballs, so blobs merge and separate like liquid. A soft highlight gives it a little volume.
 - **Face:** two white, slightly asymmetric eyes in the symbiote style, but rounded and cute. They carry most of the emotion: wide when curious, squished when happy, narrow slits when scared, closed when sleeping.
