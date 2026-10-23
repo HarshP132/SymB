@@ -6,6 +6,15 @@ See [PLAN.md](PLAN.md) for the concept, interactions and roadmap.
 
 SymB remembers its bond and size in your browser (localStorage).
 
+## Playing with SymB
+
+- **Move** around: it watches you, and (once it trusts you) chases and catches your cursor.
+- **Hold still** near a shy SymB: it slowly gathers courage and comes to you.
+- **Stroke** it slowly to pet it; **circle** quickly on it to tickle it.
+- **Click / tap** empty space to drop food; click it to boop it.
+- **Press and hold** on it for a hug (once it's friendly).
+- **Leave** for a while and it falls asleep; come back gently and it wakes with a stretch.
+
 ## Run
 
 ```sh

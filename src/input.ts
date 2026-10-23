@@ -10,7 +10,19 @@ export interface Pointer {
   speed: number;
   /** True while there is a cursor/finger SymB can see. */
   active: boolean;
+  /** True while the button / finger is pressed. */
+  down: boolean;
 }
+
+/** A quick press-and-release without dragging: a click or a tap. */
+export interface Tap {
+  x: number;
+  y: number;
+}
+
+/** Longest press, s, and furthest drag, px, that still count as a tap. */
+const TAP_TIME = 0.3;
+const TAP_SLOP = 10;
 
 export class Input implements Pointer {
   x = 0;
@@ -21,6 +33,11 @@ export class Input implements Pointer {
   down = false;
   /** Seconds since the pointer last moved. */
   stillFor = 0;
+  /** Taps since the last call to takeTaps(). */
+  private taps: Tap[] = [];
+  private pressAt = 0;
+  private pressX = 0;
+  private pressY = 0;
 
   private lastEventTime = 0;
   private moved = false;
@@ -32,6 +49,9 @@ export class Input implements Pointer {
       this.down = true;
       this.active = true;
       this.place(e);
+      this.pressAt = e.timeStamp;
+      this.pressX = e.clientX;
+      this.pressY = e.clientY;
     });
     el.addEventListener('pointerup', (e) => this.onUp(e));
     el.addEventListener('pointercancel', (e) => this.onUp(e));
@@ -42,6 +62,13 @@ export class Input implements Pointer {
       this.active = false;
       this.down = false;
     });
+  }
+
+  /** Hand over (and forget) the taps that happened since last time. */
+  takeTaps(): Tap[] {
+    const t = this.taps;
+    this.taps = [];
+    return t;
   }
 
   get speed(): number {
@@ -91,6 +118,11 @@ export class Input implements Pointer {
   }
 
   private onUp(e: PointerEvent): void {
+    if (this.down && e.type === 'pointerup') {
+      const quick = (e.timeStamp - this.pressAt) / 1000 < TAP_TIME;
+      const still = Math.hypot(e.clientX - this.pressX, e.clientY - this.pressY) < TAP_SLOP;
+      if (quick && still) this.taps.push({ x: e.clientX, y: e.clientY });
+    }
     this.down = false;
     if (e.pointerType !== 'mouse') this.active = false;
   }

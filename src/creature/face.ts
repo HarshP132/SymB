@@ -34,7 +34,7 @@ export class Face {
   forced: Expression = 'auto';
 
   /** What the face shows: the brain's mood, unless a preview is forced. */
-  private mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0 };
+  private mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0, content: 0 };
   // Smoothed gaze, a vector of length <= 1 in face space.
   private lookX = 0;
   private lookY = 0;
@@ -54,7 +54,14 @@ export class Face {
     this.startBlink();
   }
 
-  update(dt: number, t: number, body: Body, ptr: Pointer, mood: Readonly<Mood>): void {
+  update(
+    dt: number,
+    t: number,
+    body: Body,
+    ptr: Pointer,
+    mood: Readonly<Mood>,
+    lookAt: { x: number; y: number } | null,
+  ): void {
     const m = Object.assign(this.mood, mood);
     switch (this.forced) {
       case 'happy': Object.assign(m, { joy: 1, fear: 0, sleepy: 0, focus: 0 }); break;
@@ -62,19 +69,19 @@ export class Face {
       case 'sleepy': Object.assign(m, { joy: 0, fear: 0, sleepy: 1, focus: 0 }); break;
       case 'curious': Object.assign(m, { joy: 0, fear: 0, sleepy: 0, focus: 0 }); break;
     }
-    this.look(dt, t, body, ptr);
+    this.look(dt, t, body, lookAt ?? (ptr.active ? ptr : null));
     this.blink(dt);
     this.place(dt, body);
   }
 
-  private look(dt: number, t: number, body: Body, ptr: Pointer): void {
+  private look(dt: number, t: number, body: Body, at: { x: number; y: number } | null): void {
     const R = body.radius;
     let tx: number;
     let ty: number;
-    if (ptr.active && this.mood.sleepy < 0.8) {
-      // Look at the cursor (or the tendril tip chasing it).
-      const dx = ptr.x - body.hx;
-      const dy = ptr.y - body.hy;
+    if (at && this.mood.sleepy < 0.8) {
+      // Look at the cursor, or whatever has caught its attention.
+      const dx = at.x - body.hx;
+      const dy = at.y - body.hy;
       const d = Math.hypot(dx, dy) || 1;
       const k = Math.min(1, d / (R * 3));
       tx = (dx / d) * k;
@@ -147,9 +154,10 @@ export class Face {
       // Scared eyes shrink to small, wide-open, worried ovals.
       size: 1 + m.surprise * 0.18 + calm * 0.06 - m.fear * 0.3 - m.focus * 0.05,
       open: 1,
-      happy: m.joy,
+      // Bliss (petting, hugs) shows as soft, happily closed eyes.
+      happy: Math.max(m.joy, m.content),
       // Never fully shut: a closed eye keeps a thin smile-like sliver.
-      lid: Math.min(0.9, Math.max(sleepyLid, m.fear * 0.22, m.focus * 0.25)),
+      lid: Math.min(0.9, Math.max(sleepyLid, m.fear * 0.22, m.focus * 0.25, m.content * 0.3)),
       lidTilt: m.fear * 0.9,
     };
     const k = Math.min(1, dt * 10);

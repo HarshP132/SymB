@@ -51,6 +51,7 @@ A hidden **Bond** value from 0 to 100 drives five stages. Movement and expressio
 | **Petting** | Move slowly across its body | Ripples follow your path and its eyes close contentedly. A purr vibration plays, and Bond goes up. |
 | **Tickle** | Fast small circles on it | Jiggly giggle-wobble and squirming. |
 | **Startle** | Sudden fast flick nearby | It puffs out spikes (a nod to symbiotes), then calms down. Shy SymB flees and hides instead. |
+| **Boop** | Click / tap on it | Jiggle and a wince; a shy SymB flinches. You can't be caught while your cursor is touching it. |
 | **Reach structure** | Cursor above jumping range | SymB roots itself under the cursor and grows a thick, pulsing goo column with curling side branches, climbing all the way to the cursor. |
 | **Engulf** | Every catch | A bubble of goo closes around the cursor (the real cursor hides), and a white glint of it is carried down the strand into the body, which gulps and grows. Friendly stages hold it in a short squeezing hug first. |
 | **Feed** | Click in empty space | Drops a small ink droplet. It notices it, wobbles over and slurps it up. This is a second way to grow. |
@@ -156,7 +157,7 @@ Each milestone ends with something you can open in a browser and react to before
 | **M2** ✅ | Follow & Catch | Steering toward the cursor, tendril reach, catch detection, gulp ripple, growth curve, camera follow/zoom, parallax dust void. | M |
 | **M3** ✅ | The Face | Eyes with blinking, look-at-cursor, squash, and an expression set (curious, happy, scared, sleepy). | S |
 | **M4** ✅ | The Brain | Emotions + bond + 5 stages. Shy hiding/fleeing, stillness trust, pounce, orbit, startle spikes. Debug panel with a bond slider to preview every stage. *Checkpoint: personality review.* | L |
-| **M5** | Living with it | Petting, tickle, feeding by click, hug, sleep/wake, leave/return greetings, persistence. | M |
+| **M5** ✅ | Living with it | Petting, tickle, feeding by click, hug, sleep/wake, leave/return greetings, persistence. | M |
 | **M6** | Delight pass | Budding droplets, heart shape, stage-transition "moments", procedural audio, touch support. | M |
 | **M7** | Polish & ship | Tuning pacing/feel, performance on mobile, reduced motion, WebGL fallback, final deploy. | S |
 

@@ -7,6 +7,7 @@
 
 import type { Pointer } from '../input';
 import { type Body, type Box, type Intent, idleIntent } from './body';
+import type { Morsel, Pantry } from '../world/food';
 import { Tendril } from './tendril';
 
 /** Emotions, each 0..1, easing back toward calm on their own. */
@@ -20,6 +21,8 @@ export interface Mood {
   surprise: number;
   /** A shy SymB's nerve to approach a cursor that keeps still. */
   courage: number;
+  /** Blissed out: being petted or hugged. */
+  content: number;
 }
 
 export const STAGES = ['Shy', 'Curious', 'Playful', 'Friendly', 'Super friendly'] as const;
@@ -36,10 +39,20 @@ const BOND_PER_MIN_TOGETHER = 0.25;
 const BOND_PER_MIN_TRUST = 0.6;
 const BOND_PER_CATCH = 0.35;
 const BOND_PER_STARTLE = -0.25;
+const BOND_PER_MIN_PETTING = 1.2;
+const BOND_PER_MIN_HUGGING = 1.5;
+const BOND_PER_TICKLE = 0.1;
+const BOND_PER_MEAL = 0.15;
+/** Bond lost per hour away; never more than half the current stage. */
+const BOND_DECAY_PER_HOUR = 0.25;
+/** Hold a press on SymB this long for a hug (or a squirm), s. */
+const PRESS_TIME = 0.35;
 
 export class Brain {
   bond = 0;
-  readonly mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0 };
+  readonly mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0, content: 0 };
+  /** Something it's looking at instead of the cursor (food, where you left). */
+  lookAt: { x: number; y: number } | null = null;
   readonly intent: Intent = idleIntent();
 
   private rest = 0;
@@ -53,6 +66,18 @@ export class Brain {
   private wasActive = false;
   private idleX = 0;
   private wanderSeed = Math.random() * 100;
+  // Gestures on its body.
+  private pet = 0;
+  private tickle = 0;
+  private turn = 0;
+  private lastAngle = 0;
+  private press = 0;
+  /** The cursor is touching its body (so it's being handled, not hunted). */
+  private touching = false;
+  private asleep = false;
+  // Where and when the cursor was last seen, for waiting by the door.
+  private lastSeen = { x: 0, y: 0 };
+  private leftAt = 0;
 
   get stage(): number {
     let s = 0;
@@ -70,6 +95,30 @@ export class Brain {
     else this.mood.joy = Math.max(this.mood.joy, strength * 0.5);
   }
 
+  /** Coming back to the page after a while away. */
+  welcomeBack(hoursAway: number): void {
+    const st = this.stage;
+    const width = (STAGE_AT[st + 1] ?? 100) - STAGE_AT[st];
+    this.bond = Math.max(0, this.bond - Math.min(width / 2, hoursAway * BOND_DECAY_PER_HOUR));
+  }
+
+  /** A quick tap right on it. */
+  onBoop(): void {
+    if (this.stage === 0) this.mood.fear = Math.min(1, this.mood.fear + 0.35);
+    else this.mood.joy = Math.max(this.mood.joy, 0.4);
+  }
+
+  /** A morsel has been swallowed. */
+  onEat(): void {
+    this.mood.joy = 1;
+    this.bond = Math.min(100, this.bond + BOND_PER_MEAL);
+  }
+
+  /** True while the cursor is pressed and held on it as a hug. */
+  get hugging(): boolean {
+    return this.press > PRESS_TIME && this.stage >= 3;
+  }
+
   /** The cursor has been swallowed. */
   onCatch(): void {
     this.mood.joy = 1;
@@ -82,7 +131,7 @@ export class Brain {
     }
   }
 
-  update(dt: number, t: number, body: Body, ptr: Pointer, stillFor: number): void {
+  update(dt: number, t: number, body: Body, ptr: Pointer, stillFor: number, pantry: Pantry): void {
     this.rest = Math.max(0, this.rest - dt);
     this.flee = Math.max(0, this.flee - dt);
     this.tag = Math.max(0, this.tag - dt);
@@ -91,9 +140,49 @@ export class Brain {
     this.jumpWait = Math.max(0, this.jumpWait - dt);
     this.hopWait = Math.max(0, this.hopWait - dt);
     this.greet = Math.max(0, this.greet - dt);
+    this.tickle = Math.max(0, this.tickle - dt);
 
+    this.sense(dt, body, ptr);
     this.feel(dt, body, ptr, stillFor);
-    this.decide(t, body, ptr, stillFor);
+    this.decide(t, body, ptr, stillFor, pantry);
+  }
+
+  /** Read what the cursor is doing on its body: petting, tickling, pressing. */
+  private sense(dt: number, body: Body, ptr: Pointer): void {
+    const R = body.radius;
+    const onBody = ptr.active && ptr.y < 0 && Math.hypot(ptr.x - body.hx, ptr.y - body.hy) < R * 1.7;
+    this.touching = onBody;
+
+    // Petting: slow strokes across it, without pressing.
+    const stroking = onBody && !ptr.down && ptr.speed > 40 && ptr.speed < 650;
+    this.pet = Math.max(0, Math.min(1, this.pet + (stroking ? dt * 1.2 : -dt * 1.5)));
+
+    // Tickling: the cursor keeps turning while it zips around on the body.
+    if (onBody && ptr.speed > 150) {
+      const a = Math.atan2(ptr.vy, ptr.vx);
+      let d = a - this.lastAngle;
+      if (d > Math.PI) d -= Math.PI * 2;
+      if (d < -Math.PI) d += Math.PI * 2;
+      this.turn += d;
+      this.lastAngle = a;
+    }
+    this.turn *= Math.exp(-dt * 1.2);
+    if (Math.abs(this.turn) > 8) {
+      this.turn = 0;
+      if (this.tickle === 0) this.onTickled();
+      this.tickle = 1.2;
+    }
+
+    this.press = ptr.down && onBody ? this.press + dt : 0;
+  }
+
+  private onTickled(): void {
+    if (this.stage === 0) {
+      this.mood.fear = Math.min(1, this.mood.fear + 0.4);
+    } else {
+      this.mood.joy = Math.max(this.mood.joy, 0.8);
+      this.bond = Math.min(100, this.bond + BOND_PER_TICKLE);
+    }
   }
 
   private feel(dt: number, body: Body, ptr: Pointer, stillFor: number): void {
@@ -149,37 +238,111 @@ export class Brain {
     const drowsy = Math.min(1, Math.max(0, (idle - 10) / 15));
     m.sleepy += (drowsy - m.sleepy) * Math.min(1, dt * (drowsy > m.sleepy ? 0.6 : 4));
 
+    // Pressing on a shy or curious SymB is unnerving rather than nice.
+    if (this.press > PRESS_TIME && st === 0) m.fear = Math.min(1, m.fear + dt * 2);
+
+    const petted = this.pet > 0.5 && this.tickle === 0;
+    const bliss = petted || this.hugging ? 1 : 0;
+    m.content += (bliss - m.content) * Math.min(1, dt * (bliss ? 1.5 : 1));
+    if (petted) this.bond += (dt * BOND_PER_MIN_PETTING) / 60;
+    if (this.hugging) this.bond += (dt * BOND_PER_MIN_HUGGING) / 60;
+    this.bond = Math.max(0, Math.min(100, this.bond));
+    if (m.content > 0.5) m.fear *= Math.exp(-dt * 3);
+
+    // Waking up properly: a big stretch.
+    if (m.sleepy > 0.85) this.asleep = true;
+    if (this.asleep && m.sleepy < 0.4) {
+      this.asleep = false;
+      body.stretch();
+    }
+
     m.focus += (body.tendril.extension - m.focus) * Math.min(1, dt * 6);
     m.surprise += ((body.grounded ? 0 : 1) - m.surprise) * Math.min(1, dt * 8);
   }
 
-  private decide(t: number, body: Body, ptr: Pointer, stillFor: number): void {
+  private decide(t: number, body: Body, ptr: Pointer, stillFor: number, pantry: Pantry): void {
+    const it = this.intent;
+    const m = this.mood;
+    const st = this.stage;
+    it.vx = 0;
+    it.crouch = 0;
+    it.reach = null;
+    it.catchable = false;
+    it.hold = st >= 3 ? 0.25 + (st - 3) * 0.2 : 0;
+    it.spikes = this.spikeTime > 0 ? 1 : st <= 1 && m.fear > 0.7 ? 0.35 : 0;
+    it.hugAt = null;
+    it.food = null;
+    it.purr = m.content;
+    it.giggle = this.tickle > 0 ? 1 : 0;
+    it.sleep = m.sleepy > 0.8 ? 1 : 0;
+    this.lookAt = null;
+    this.choose(t, body, ptr, stillFor, pantry);
+    // Sleepy heads sink low.
+    it.crouch = Math.max(it.crouch, m.sleepy * 0.35);
+  }
+
+  private choose(t: number, body: Body, ptr: Pointer, stillFor: number, pantry: Pantry): void {
     const it = this.intent;
     const m = this.mood;
     const st = this.stage;
     const R = body.radius;
     const maxSpeed = 220 + R * 3;
-    it.vx = 0;
-    it.crouch = 0;
-    it.reach = null;
-    it.catchable = false;
-    it.hug = st >= 3 ? 0.25 + (st - 3) * 0.2 : 0;
-    it.spikes = this.spikeTime > 0 ? 1 : st <= 1 && m.fear > 0.7 ? 0.35 : 0;
 
     // Busy swallowing: stay put and enjoy it.
     if (body.engulfing) return;
 
     if (!ptr.active) {
-      this.wasActive = false;
+      if (this.wasActive) {
+        this.wasActive = false;
+        this.lastSeen = { x: ptr.x, y: ptr.y };
+        this.leftAt = t;
+      }
+      if (this.goEat(body, pantry, maxSpeed)) return;
+      if (st >= 3 && t - this.leftAt < 25 && m.sleepy < 0.5) {
+        // Friends wait where you left, watching for you to come back.
+        const box = body.box;
+        const x = Math.max(box.left + R * 2, Math.min(box.right - R * 2, this.lastSeen.x));
+        it.vx = clamp((x - body.hx) * 2, maxSpeed * 0.6);
+        this.lookAt = this.lastSeen;
+        this.idleX = body.hx;
+        return;
+      }
       this.wander(t, body, maxSpeed);
       return;
     }
     if (!this.wasActive) {
       this.wasActive = true;
-      // Friends are delighted to see you back.
-      if (st >= 3) this.greet = 1.2;
+      this.greetByStage(body);
     }
     this.idleX = body.hx;
+
+    if (this.hugging) {
+      // Wrap around the cursor and hold on, settling right under it.
+      it.hugAt = { x: ptr.x, y: ptr.y };
+      it.vx = clamp((ptr.x - body.hx) * 3, maxSpeed * 0.6);
+      return;
+    }
+    if (this.pet > 0.5 && this.tickle === 0) {
+      // Being petted: hold still and enjoy it.
+      return;
+    }
+    if (this.tickle > 0) {
+      // Wriggle and squeak with little hops.
+      it.vx = Math.sin(t * 13) * maxSpeed * 0.25;
+      if (body.grounded && this.hopWait === 0) {
+        it.pounce = R * 0.35;
+        this.hopWait = 0.4;
+      }
+      return;
+    }
+    if (this.press > PRESS_TIME && st > 0) {
+      // Not ready for hugs yet: squirm out from under the press.
+      it.vx = -(Math.sign(ptr.x - body.hx) || 1) * maxSpeed * 0.6;
+      it.giggle = 0.5;
+      return;
+    }
+    const shyOfYou = st === 0 && (m.fear > 0.3 || (Math.hypot(ptr.x - body.hx, ptr.y) < R * 6 && stillFor < 1.5));
+    if (!shyOfYou && this.goEat(body, pantry, maxSpeed)) return;
 
     const dx = ptr.x - body.hx;
     const adx = Math.abs(dx);
@@ -255,7 +418,49 @@ export class Brain {
     }
 
     // Scoot away from pokes when it isn't trying to catch you.
-    if (!it.catchable && dist < R * 2) it.vx -= dir * (1 - dist / (R * 2)) * maxSpeed;
+    // Gentle hands are welcome once it trusts you; fast pokes never are.
+    const poke = ptr.speed > 650 || st <= 1;
+    if (!it.catchable && poke && dist < R * 2) it.vx -= dir * (1 - dist / (R * 2)) * maxSpeed;
+  }
+
+  /** The cursor just appeared: say hello the way this stage would. */
+  private greetByStage(body: Body): void {
+    const R = body.radius;
+    switch (this.stage) {
+      case 0:
+        // Eek! Dart back into the corner.
+        this.flee = 1;
+        break;
+      case 1:
+        // Perk up.
+        this.intent.pounce = R * 0.4;
+        break;
+      case 2:
+        this.intent.pounce = R * 0.8;
+        this.mood.joy = Math.max(this.mood.joy, 0.5);
+        break;
+      default:
+        // So happy to see you: a run of excited hops.
+        this.greet = 1.2;
+        this.mood.joy = Math.max(this.mood.joy, 0.8);
+    }
+  }
+
+  /** Waddle over to the nearest morsel and slurp it up with the tendril. */
+  private goEat(body: Body, pantry: Pantry, maxSpeed: number): boolean {
+    const food: Morsel | null = pantry.nearest(body.hx);
+    if (!food) return false;
+    const it = this.intent;
+    const R = body.radius;
+    const dx = food.x - body.hx;
+    const standoff = R * 1.4;
+    it.vx = clamp((dx - Math.sign(dx) * Math.min(Math.abs(dx), standoff)) * 3, maxSpeed * 0.8);
+    this.lookAt = food;
+    if (Math.hypot(dx, food.y - body.hy) < Tendril.reach(R) + R * 0.7) {
+      it.reach = { x: food.x, y: food.y, tower: false, speed: 1.3 };
+      it.food = food;
+    }
+    return true;
   }
 
   /**
@@ -263,7 +468,8 @@ export class Brain {
    * but within jumping range, and a tower of goo when it's higher still.
    */
   private tryReach(body: Body, ptr: Pointer, canPounce: boolean, canTower: boolean, speed: number): void {
-    if (this.rest > 0) return;
+    // No grabbing a hand that's touching it: that's petting, not prey.
+    if (this.rest > 0 || this.touching) return;
     const it = this.intent;
     const R = body.radius;
     const dx = ptr.x - body.hx;

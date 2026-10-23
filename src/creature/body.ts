@@ -5,6 +5,7 @@
 // Everything here is in world space: the floor is y = 0 and up is -y.
 
 import type { Pointer } from '../input';
+import type { Morsel } from '../world/food';
 import { Tendril } from './tendril';
 
 export interface Ball {
@@ -49,6 +50,8 @@ const REST_HEIGHT = 1.25;
 const GRAVITY = 2600;
 /** How close the heart may get to a wall or the ceiling, in body radii. */
 const WALL_INSET = 1.25;
+/** How long a wake-up stretch lasts, s. */
+const STRETCH_TIME = 1.1;
 /** How long the bubble takes to close around a catch, s. */
 const WRAP_TIME = 0.35;
 
@@ -66,12 +69,25 @@ export interface Intent {
   catchable: boolean;
   /** Set to a rise height (px) to pounce; the body clears it once used. */
   pounce: number;
-  /** Extra time the bubble holds the catch (a hug), s. */
-  hug: number;
+  /** Extra time the bubble holds a caught cursor (a squeeze), s. */
+  hold: number;
+  /** Wrap around the cursor here and hold on (a hug), or null. */
+  hugAt: { x: number; y: number } | null;
+  /** A morsel it's going for; the tendril may grab this one. */
+  food: Morsel | null;
+  /** 0..1: contented vibration while being petted or hugged. */
+  purr: number;
+  /** 0..1: wriggly jiggle while being tickled. */
+  giggle: number;
+  /** 0..1: slow, deep sleeping breaths. */
+  sleep: number;
 }
 
 export function idleIntent(): Intent {
-  return { vx: 0, crouch: 0, spikes: 0, reach: null, catchable: false, pounce: 0, hug: 0 };
+  return {
+    vx: 0, crouch: 0, spikes: 0, reach: null, catchable: false, pounce: 0, hold: 0,
+    hugAt: null, food: null, purr: 0, giggle: 0, sleep: 0,
+  };
 }
 
 /** The window's edges in world space: SymB's walls and ceiling. */
@@ -89,6 +105,15 @@ interface Engulf {
   y: number;
   hold: number;
   travel: number;
+  /** Set when it's a morsel being eaten rather than the cursor. */
+  food: Morsel | null;
+}
+
+/** A dream bubble drifting up from a sleeping SymB. */
+interface Dream {
+  ball: Ball;
+  vx: number;
+  age: number;
 }
 
 export class Body {
@@ -102,6 +127,10 @@ export class Body {
   catches = 0;
   /** Called when a caught cursor has been swallowed. */
   onCatch?: () => void;
+  /** Called when a morsel has been swallowed. */
+  onEat?: () => void;
+  /** True while it's wrapped around the cursor in a hug. */
+  hugging = false;
   /** Called when it bumps into a wall or the ceiling; strength 0..1. */
   onImpact?: (strength: number) => void;
   /** Where the walls are; set each step from the window. */
@@ -131,6 +160,13 @@ export class Body {
   private gulp = 0;
   private gulpAge = 0;
   private impactWait = 0;
+  /** Seconds into a wake-up stretch, or < 0 when not stretching. */
+  private stretchT = -1;
+  private dreams: Dream[] = [];
+  private nextDream = 0;
+  private purr = 0;
+  private giggle = 0;
+  private sleep = 0;
   private readonly bubble: Ball[] = [];
 
   constructor(x: number) {
@@ -144,9 +180,20 @@ export class Body {
     return BASE_RADIUS * (1 + GROWTH * Math.log(1 + this.shownMass));
   }
 
-  /** True while a caught cursor is being wrapped up and swallowed. */
+  /** True while a catch (or a morsel) is being wrapped up and swallowed. */
   get engulfing(): boolean {
     return this.engulf !== null;
+  }
+
+  /** True while the cursor itself is inside the goo, caught or hugged. */
+  get holdingCursor(): boolean {
+    return (this.engulf !== null && this.engulf.food === null) || this.hugging;
+  }
+
+  /** A wobble that runs through the whole body. */
+  jiggle(strength: number): void {
+    this.gulp = Math.max(this.gulp, strength);
+    this.gulpAge = 0;
   }
 
   /** Jump straight to a size, e.g. when restoring a saved SymB. */
@@ -202,16 +249,32 @@ export class Body {
     const sk = intent.spikes > this.spikes ? 18 : 2.5;
     this.spikes += (intent.spikes - this.spikes) * Math.min(1, dt * sk);
 
+    const ease = Math.min(1, dt * 6);
+    this.purr += (intent.purr - this.purr) * ease;
+    this.giggle += (intent.giggle - this.giggle) * ease;
+    this.sleep += (intent.sleep - this.sleep) * Math.min(1, dt * 2);
+    if (this.stretchT >= 0) {
+      this.stretchT += dt;
+      if (this.stretchT > STRETCH_TIME) this.stretchT = -1;
+    }
+
     this.moveHeart(dt, ptr, intent);
     this.updateParticles(dt, t, ptr, R);
+    this.hugging = !this.engulf && intent.hugAt !== null;
     if (this.engulf) {
       this.updateEngulf(dt, t, R);
+    } else if (intent.hugAt) {
+      this.hug(t, R, intent.hugAt);
     } else {
       this.steerTendril(intent);
       this.checkCatch(ptr, R, intent);
+      this.checkFood(R, intent);
+      // Let a finished hug's bubble melt away.
+      for (const b of this.bubble) b.r *= Math.exp(-dt * 10);
     }
     this.tendril.update(dt, t, this.hx, this.hy, R);
-    this.prey.alpha *= this.engulf ? 1 : Math.exp(-dt * 3);
+    this.prey.alpha *= this.engulf || this.hugging ? 1 : Math.exp(-dt * 3);
+    this.updateDreams(dt, R);
     this.updateFinger(dt, ptr);
     this.collectBalls(R);
   }
@@ -318,8 +381,15 @@ export class Body {
   }
 
   private updateParticles(dt: number, t: number, ptr: Pointer, R: number): void {
-    // Breathing: slow, slightly irregular swell of the whole body.
-    const breath = 1 + 0.035 * Math.sin(t * 1.6) + 0.015 * Math.sin(t * 0.67 + 1.3) + this.gulp * 0.1;
+    // Breathing: slow, slightly irregular swell of the whole body, slower
+    // and deeper in its sleep.
+    const sl = this.sleep;
+    const breath =
+      1 + (0.035 + 0.035 * sl) * Math.sin(t * (1.6 - 0.85 * sl)) + 0.015 * Math.sin(t * 0.67 + 1.3) + this.gulp * 0.1;
+    // Waking up: a long, tall stretch.
+    const st = this.stretchT >= 0 ? Math.sin((this.stretchT / STRETCH_TIME) * Math.PI) : 0;
+    const wide = 1.1 * (1 - st * 0.2);
+    const tall = 0.9 * (1 + st * 0.45);
     // The flesh slowly swirls so the silhouette never repeats exactly.
     const swirl = t * 0.12;
     const cs = Math.cos(swirl);
@@ -360,12 +430,14 @@ export class Body {
         // gulp ripple that runs around the body after a catch.
         const wob = 0.07 * Math.sin(t * (1.1 + p.k * 0.004) + p.phase);
         const ripple = this.gulp * 0.25 * Math.sin(p.angle * 3 - this.gulpAge * 14);
-        const s = R * breath * (1 + wob + ripple);
+        const purr = this.purr * 0.03 * Math.sin(t * 42 + p.phase);
+        const giggle = this.giggle * 0.09 * Math.sin(t * 17 + p.angle * 2);
+        const s = R * breath * (1 + wob + ripple + purr + giggle);
         const ox = p.ox * cs - p.oy * sn;
         const oy = p.ox * sn + p.oy * cs;
         // Gravity settles the shape: a little wider, a little lower.
-        ax = (this.hx + ox * s * 1.1 - p.x) * p.k;
-        ay = (this.hy + oy * s * 0.9 - p.y) * p.k + SAG * R;
+        ax = (this.hx + ox * s * wide - p.x) * p.k;
+        ay = (this.hy + oy * s * tall - p.y) * p.k + SAG * R * (1 - st * 0.6);
       }
 
       // Pointer pokes push the goo aside and drag it along.
@@ -375,7 +447,9 @@ export class Body {
         const d = Math.hypot(dx, dy) + 1e-3;
         if (d < pr) {
           const near = 1 - d / pr;
-          const push = near * (1400 + Math.min(ptr.speed, 2500) * 1.2) * scale;
+          // A stroking hand presses gently; a poke pushes hard.
+          const gentle = 1 - 0.7 * Math.max(this.purr, this.giggle);
+          const push = near * (1400 + Math.min(ptr.speed, 2500) * 1.2) * scale * gentle;
           ax += (dx / d) * push;
           ay += (dy / d) * push;
           const drag = near * 10;
@@ -438,7 +512,7 @@ export class Body {
 
     // Got it: wrap the cursor in a bubble of goo, then reel it home.
     const d = Math.hypot(ptr.x - this.hx, ptr.y - this.hy);
-    this.engulf = { age: 0, x: ptr.x, y: ptr.y, hold: intent.hug, travel: 0.45 + d / 1400 };
+    this.engulf = { age: 0, x: ptr.x, y: ptr.y, hold: intent.hold, travel: 0.45 + d / 1400, food: null };
     this.prey.x = ptr.x;
     this.prey.y = ptr.y;
     this.prey.alpha = 1;
@@ -458,6 +532,14 @@ export class Body {
     p.y = e.y + (this.hy - e.y) * ease;
     p.r = R * 0.09;
     this.tendril.reachFor(p.x, p.y, this.tendril.tower > 0.5, 3);
+    if (e.food) {
+      // A morsel needs no bubble: it simply rides the tendril home.
+      e.food.x = p.x;
+      e.food.y = p.y;
+      p.alpha = 0;
+      if (home >= 1) this.swallow(R);
+      return;
+    }
 
     // A ring of goo closes around the catch, squeezing while it's hugged.
     const squeeze = e.age < closeAt && e.age > WRAP_TIME ? Math.sin((e.age - WRAP_TIME) * 9) * 0.08 : 0;
@@ -479,16 +561,82 @@ export class Body {
   }
 
   private swallow(R: number): void {
+    const food = this.engulf?.food;
     this.engulf = null;
     for (const b of this.bubble) b.r = 0;
     this.mass += 1;
-    this.catches += 1;
     this.gulp = 1;
     this.gulpAge = 0;
     this.tendril.snap();
     // A happy little hop.
     if (this.grounded) this.leap(R * 0.8);
-    this.onCatch?.();
+    if (food) {
+      food.eaten = true;
+      this.onEat?.();
+    } else {
+      this.catches += 1;
+      this.onCatch?.();
+    }
+  }
+
+  /** Grab the morsel the brain is after once the tendril touches it. */
+  private checkFood(R: number, intent: Intent): void {
+    const m = intent.food;
+    const td = this.tendril;
+    if (!m || m.held || td.extension < 0.6) return;
+    if (Math.hypot(td.tipX - m.x, td.tipY - m.y) > m.r + R * 0.25) return;
+    m.held = true;
+    const d = Math.hypot(m.x - this.hx, m.y - this.hy);
+    // Skip the wrapping: start straight on the way home.
+    this.engulf = { age: WRAP_TIME, x: m.x, y: m.y, hold: 0, travel: 0.35 + d / 1400, food: m };
+  }
+
+  /** Wrap around the cursor and hold it, squeezing gently, for as long as it stays. */
+  private hug(t: number, R: number, at: { x: number; y: number }): void {
+    this.tendril.reachFor(at.x, at.y, false, 2);
+    const p = this.prey;
+    p.x = at.x;
+    p.y = at.y;
+    p.r = R * 0.09;
+    p.alpha = 0.9;
+    const ring = R * 0.38 * (1 + 0.1 * Math.sin(t * 6));
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TAU + t * 1.5;
+      const b = this.bubble[i];
+      b.x = at.x + Math.cos(a) * ring;
+      b.y = at.y + Math.sin(a) * ring;
+      b.r += (R * 0.3 - b.r) * 0.2;
+    }
+    const core = this.bubble[8];
+    core.x = at.x;
+    core.y = at.y;
+    core.r += (R * 0.36 - core.r) * 0.2;
+  }
+
+  /** Start a waking-up stretch. */
+  stretch(): void {
+    this.stretchT = 0;
+  }
+
+  /** Dream bubbles: tiny drops of goo that float up from it while it sleeps. */
+  private updateDreams(dt: number, R: number): void {
+    this.nextDream -= dt;
+    if (this.sleep > 0.85 && this.nextDream <= 0) {
+      this.nextDream = 1.3 + Math.random();
+      this.dreams.push({
+        ball: { x: this.hx + (Math.random() - 0.3) * R * 0.5, y: this.hy - R * 1.2, r: R * 0.06 },
+        vx: (Math.random() - 0.5) * 12,
+        age: 0,
+      });
+    }
+    for (const d of this.dreams) {
+      d.age += dt;
+      d.ball.y -= (22 + R * 0.4) * dt;
+      d.ball.x += (d.vx + Math.sin(d.age * 2.4) * 14) * dt;
+      // Swell as they rise, then shrink away to nothing.
+      d.ball.r = R * (0.06 + 0.06 * Math.min(1, d.age / 1.5)) * Math.min(1, Math.max(0, (3.2 - d.age) / 0.6));
+    }
+    this.dreams = this.dreams.filter((d) => d.age < 3.2);
   }
 
   private updateFinger(dt: number, ptr: Pointer): void {
@@ -521,6 +669,7 @@ export class Body {
     for (const list of [this.tendril.balls, this.bubble]) {
       for (const tb of list) if (tb.r > 0.5) this.balls.push(tb);
     }
+    for (const d of this.dreams) if (d.ball.r > 0.5) this.balls.push(d.ball);
     for (const ball of this.balls) {
       b.minX = Math.min(b.minX, ball.x - ball.r);
       b.minY = Math.min(b.minY, ball.y - ball.r);

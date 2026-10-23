@@ -4,6 +4,7 @@ import { Face, type Eye, type Expression } from './creature/face';
 import { Input, type Pointer } from './input';
 import { GooRenderer, type Frame } from './render/goo';
 import { Camera } from './world/camera';
+import { Pantry } from './world/food';
 import { forget, load, save } from './save';
 
 const STEP = 1 / 120; // fixed physics step
@@ -38,7 +39,9 @@ const input = new Input(canvas);
 const body = new Body(0);
 const face = new Face();
 const brain = new Brain();
+const pantry = new Pantry();
 body.onCatch = () => brain.onCatch();
+body.onEat = () => brain.onEat();
 body.onImpact = (strength) => {
   brain.onImpact(strength);
   face.wince();
@@ -50,6 +53,7 @@ if (saved) {
   brain.bond = saved.bond;
   body.setMass(saved.mass);
   body.catches = saved.catches;
+  brain.welcomeBack((Date.now() - saved.at) / 3_600_000);
 }
 const remember = () => save({ bond: brain.bond, mass: body.mass, catches: body.catches });
 setInterval(remember, 5000);
@@ -59,9 +63,10 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', remember);
 
 /** The cursor as SymB sees it: in world space. */
-const pointer: Pointer = { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false };
+const pointer: Pointer = { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false, down: false };
 function syncPointer(): void {
   pointer.active = input.active;
+  pointer.down = input.down;
   pointer.x = camera.toWorldX(input.x);
   pointer.y = camera.toWorldY(input.y);
   pointer.vx = input.vx / camera.zoom;
@@ -87,15 +92,32 @@ const frameData: Frame = {
   time: 0,
 };
 
+/** Taps on SymB are boops; taps anywhere else drop a morsel of food. */
+function handleTaps(): void {
+  for (const tap of input.takeTaps()) {
+    const x = camera.toWorldX(tap.x);
+    const y = camera.toWorldY(tap.y);
+    const R = body.radius;
+    if (y < 0 && Math.hypot(x - body.hx, y - body.hy) < R * 1.6) {
+      brain.onBoop();
+      body.jiggle(0.5);
+      face.wince();
+    } else {
+      pantry.drop(x, y, R);
+    }
+  }
+}
+
 function buildFrame(time: number): Frame {
   const z = camera.zoom;
   const sx = (x: number) => camera.toScreenX(x);
   const sy = (y: number) => camera.toScreenY(y);
   const f = frameData;
 
-  screenBalls.length = body.balls.length;
-  for (let i = 0; i < body.balls.length; i++) {
-    const b = body.balls[i];
+  const all = body.balls.concat(pantry.morsels.map((m) => m.ball));
+  screenBalls.length = all.length;
+  for (let i = 0; i < all.length; i++) {
+    const b = all[i];
     const s = (screenBalls[i] ??= { x: 0, y: 0, r: 0 });
     s.x = sx(b.x);
     s.y = sy(b.y);
@@ -119,6 +141,14 @@ function buildFrame(time: number): Frame {
   f.bounds.minY = sy(wb.minY);
   f.bounds.maxX = sx(wb.maxX);
   f.bounds.maxY = sy(wb.maxY);
+  // Food lies outside the body's bounds; widen them to take it in.
+  for (const m of pantry.morsels) {
+    const pad = (m.r + body.radius) * z;
+    f.bounds.minX = Math.min(f.bounds.minX, sx(m.x) - pad);
+    f.bounds.minY = Math.min(f.bounds.minY, sy(m.y) - pad);
+    f.bounds.maxX = Math.max(f.bounds.maxX, sx(m.x) + pad);
+    f.bounds.maxY = Math.max(f.bounds.maxY, sy(m.y) + pad);
+  }
   f.radius = body.radius * z;
   f.finger.x = sx(body.finger.x);
   f.finger.y = sy(body.finger.y);
@@ -158,7 +188,7 @@ if (debug) {
   debugEl = document.createElement('div');
   debugEl.id = 'debug';
   document.body.appendChild(debugEl);
-  (window as unknown as { symb: unknown }).symb = { body, face, brain, camera, pointer };
+  (window as unknown as { symb: unknown }).symb = { body, face, brain, camera, pointer, pantry };
   bondSlider = makeBondSlider();
   window.addEventListener('keydown', (e) => {
     // Match physical keys so layout and Caps Lock don't matter.
@@ -197,9 +227,11 @@ function frame(now: number): void {
     input.update(STEP);
     syncPointer();
     camera.box(body.box);
-    brain.update(STEP, time, body, pointer, input.stillFor);
+    handleTaps();
+    pantry.update(STEP, body.box);
+    brain.update(STEP, time, body, pointer, input.stillFor, pantry);
     body.update(STEP, time, pointer, brain.intent);
-    face.update(STEP, time, body, pointer, brain.mood);
+    face.update(STEP, time, body, pointer, brain.mood, brain.lookAt);
     camera.update(STEP, body.radius);
     time += STEP;
     acc -= STEP;
@@ -209,7 +241,7 @@ function frame(now: number): void {
 
   renderer.render(buildFrame(time), dpr);
   // While it's swallowing your cursor, your cursor is gone.
-  const cursor = body.engulfing ? 'none' : '';
+  const cursor = body.holdingCursor ? 'none' : '';
   if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 
   if (debugEl) {
