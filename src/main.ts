@@ -1,8 +1,10 @@
 import { Body, type Ball } from './creature/body';
+import { Brain, STAGES, STAGE_AT } from './creature/brain';
 import { Face, type Eye, type Expression } from './creature/face';
 import { Input, type Pointer } from './input';
 import { GooRenderer, type Frame } from './render/goo';
 import { Camera } from './world/camera';
+import { forget, load, save } from './save';
 
 const STEP = 1 / 120; // fixed physics step
 const MAX_STEPS = 8;
@@ -35,7 +37,22 @@ window.addEventListener('resize', resize);
 const input = new Input(canvas);
 const body = new Body(0);
 const face = new Face();
-body.onCatch = () => face.delight();
+const brain = new Brain();
+body.onCatch = () => brain.onCatch();
+
+// Pick up where we left off.
+const saved = load();
+if (saved) {
+  brain.bond = saved.bond;
+  body.setMass(saved.mass);
+  body.catches = saved.catches;
+}
+const remember = () => save({ bond: brain.bond, mass: body.mass, catches: body.catches });
+setInterval(remember, 5000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) remember();
+});
+window.addEventListener('pagehide', remember);
 
 /** The cursor as SymB sees it: in world space. */
 const pointer: Pointer = { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false };
@@ -54,6 +71,8 @@ const screenEyes: Eye[] = face.eyes.map((e) => ({ ...e }));
 const frameData: Frame = {
   balls: screenBalls,
   eyes: screenEyes,
+  prey: { x: 0, y: 0, r: 0, alpha: 0 },
+  spike: { x: 0, y: 0, r: 0, amount: 0 },
   bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   radius: 0,
   finger: { x: 0, y: 0, r: 0, strength: 0 },
@@ -83,6 +102,14 @@ function buildFrame(time: number): Frame {
     const e = face.eyes[i];
     Object.assign(screenEyes[i], e, { x: sx(e.x), y: sy(e.y), rx: e.rx * z, ry: e.ry * z });
   }
+  f.prey.x = sx(body.prey.x);
+  f.prey.y = sy(body.prey.y);
+  f.prey.r = body.prey.r * z;
+  f.prey.alpha = body.prey.alpha;
+  f.spike.x = sx(body.hx);
+  f.spike.y = sy(body.hy);
+  f.spike.r = body.radius * z;
+  f.spike.amount = body.spikes;
   const wb = body.bounds;
   f.bounds.minX = sx(wb.minX);
   f.bounds.minY = sy(wb.minY);
@@ -104,15 +131,44 @@ function buildFrame(time: number): Frame {
 }
 
 let debugEl: HTMLElement | null = null;
+let bondSlider: HTMLInputElement | null = null;
+
+/** Debug: a slider to jump between personality stages. */
+function makeBondSlider(): HTMLInputElement {
+  const wrap = document.createElement('label');
+  wrap.id = 'bond';
+  wrap.textContent = 'bond ';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = '100';
+  slider.step = '0.5';
+  slider.addEventListener('input', () => (brain.bond = Number(slider.value)));
+  const marks = document.createElement('span');
+  marks.textContent = STAGES.map((s, i) => `${STAGE_AT[i]} ${s}`).join(' · ');
+  wrap.append(slider, marks);
+  document.body.appendChild(wrap);
+  return slider;
+}
 if (debug) {
   debugEl = document.createElement('div');
   debugEl.id = 'debug';
   document.body.appendChild(debugEl);
-  (window as unknown as { symb: unknown }).symb = { body, face, camera, pointer };
+  (window as unknown as { symb: unknown }).symb = { body, face, brain, camera, pointer };
+  bondSlider = makeBondSlider();
   window.addEventListener('keydown', (e) => {
     // Match physical keys so layout and Caps Lock don't matter.
     if (e.code === 'KeyG') body.mass += e.shiftKey ? 25 : 1;
-    if (e.code === 'KeyR') body.mass = 0;
+    if (e.code === 'KeyR' && !e.shiftKey) body.setMass(0);
+    if (e.code === 'KeyR' && e.shiftKey) {
+      // Start over completely: a brand-new, tiny, shy SymB.
+      forget();
+      brain.bond = 0;
+      body.setMass(0);
+      body.catches = 0;
+    }
+    if (e.code === 'BracketLeft') brain.bond = Math.max(0, brain.bond - 5);
+    if (e.code === 'BracketRight') brain.bond = Math.min(100, brain.bond + 5);
     const faces: Record<string, Expression> = {
       Digit0: 'auto', Digit1: 'curious', Digit2: 'happy', Digit3: 'scared', Digit4: 'sleepy',
     };
@@ -136,9 +192,11 @@ function frame(now: number): void {
   while (acc >= STEP && steps < MAX_STEPS) {
     input.update(STEP);
     syncPointer();
-    body.update(STEP, time, pointer);
-    face.update(STEP, time, body, pointer, input.stillFor);
-    camera.update(STEP, body.hx, body.radius);
+    const view = { left: camera.toWorldX(0), right: camera.toWorldX(window.innerWidth) };
+    brain.update(STEP, time, body, pointer, input.stillFor, view);
+    body.update(STEP, time, pointer, brain.intent);
+    face.update(STEP, time, body, pointer, brain.mood);
+    camera.update(STEP, brain.holdCamera ? camera.x : body.hx, body.radius);
     time += STEP;
     acc -= STEP;
     steps++;
@@ -146,6 +204,9 @@ function frame(now: number): void {
   if (steps === MAX_STEPS) acc = 0;
 
   renderer.render(buildFrame(time), dpr);
+  // While it's swallowing your cursor, your cursor is gone.
+  const cursor = body.engulfing ? 'none' : '';
+  if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 
   if (debugEl) {
     fpsFrames++;
@@ -156,9 +217,12 @@ function frame(now: number): void {
       fpsTime = 0;
     }
     debugEl.textContent =
+      `${brain.stageName} · bond ${brain.bond.toFixed(1)} · ` +
+      Object.entries(brain.mood).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(' ') + '\n' +
       `${fps.toFixed(0)} fps · dpr ${dpr}\n` +
       `mass ${body.mass} · catches ${body.catches} · radius ${body.radius.toFixed(1)}px · zoom ${camera.zoom.toFixed(2)}\n` +
-      `g / G grow · r reset · 1–4 face (curious, happy, scared, sleepy) · 0 auto`;
+      `g / G grow · r reset size · R start over · [ ] bond ±5 · 1–4 face (curious, happy, scared, sleepy) · 0 auto`;
+    if (bondSlider && document.activeElement !== bondSlider) bondSlider.value = String(brain.bond);
   }
 
   requestAnimationFrame(frame);

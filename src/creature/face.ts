@@ -4,6 +4,7 @@
 
 import type { Pointer } from '../input';
 import type { Body } from './body';
+import type { Mood } from './brain';
 
 /** One eye, in world space. Local +x points away from the face's centre. */
 export interface Eye {
@@ -27,21 +28,13 @@ export interface Eye {
 
 export type Expression = 'auto' | 'happy' | 'scared' | 'sleepy' | 'curious';
 
-/** Emotions that drive the face, each 0..1; they ease back to calm. */
-interface Mood {
-  joy: number;
-  fear: number;
-  sleepy: number;
-  focus: number;
-  surprise: number;
-}
-
 export class Face {
   readonly eyes: [Eye, Eye] = [makeEye(-1), makeEye(1)];
   /** Debug override to preview a single expression. */
   forced: Expression = 'auto';
 
-  mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0 };
+  /** What the face shows: the brain's mood, unless a preview is forced. */
+  private mood: Mood = { joy: 0, fear: 0, sleepy: 0, focus: 0, surprise: 0, courage: 0 };
   // Smoothed gaze, a vector of length <= 1 in face space.
   private lookX = 0;
   private lookY = 0;
@@ -56,46 +49,17 @@ export class Face {
   // Eased, displayed expression parameters.
   private shown = { open: 1, happy: 0, lid: 0, lidTilt: 0, size: 1 };
 
-  /** A catch: pure joy. */
-  delight(): void {
-    this.mood.joy = 1;
-  }
-
-  update(dt: number, t: number, body: Body, ptr: Pointer, stillFor: number): void {
-    this.feel(dt, body, ptr, stillFor);
-    this.look(dt, t, body, ptr);
-    this.blink(dt);
-    this.place(dt, body);
-  }
-
-  private feel(dt: number, body: Body, ptr: Pointer, stillFor: number): void {
-    const m = this.mood;
-    const R = body.radius;
-    m.joy *= Math.exp(-dt * 0.9);
-    m.fear *= Math.exp(-dt * 1.4);
-
-    // A sudden fast swipe close by is startling.
-    if (ptr.active) {
-      const d = Math.hypot(ptr.x - body.hx, ptr.y - body.hy);
-      const close = Math.max(0, 1 - d / (R * 4));
-      const fast = Math.max(0, (ptr.speed - 1400) / 1600);
-      m.fear = Math.min(1, m.fear + close * fast * dt * 12);
-    }
-
-    // Nobody around for a while: eyelids grow heavy.
-    const drowsy = Math.min(1, Math.max(0, (stillFor - 10) / 15));
-    m.sleepy += (drowsy - m.sleepy) * Math.min(1, dt * (drowsy > m.sleepy ? 0.6 : 4));
-
-    m.focus += (body.tendril.extension - m.focus) * Math.min(1, dt * 6);
-    const airborne = body.grounded ? 0 : 1;
-    m.surprise += (airborne - m.surprise) * Math.min(1, dt * 8);
-
+  update(dt: number, t: number, body: Body, ptr: Pointer, mood: Readonly<Mood>): void {
+    const m = Object.assign(this.mood, mood);
     switch (this.forced) {
       case 'happy': Object.assign(m, { joy: 1, fear: 0, sleepy: 0, focus: 0 }); break;
       case 'scared': Object.assign(m, { joy: 0, fear: 1, sleepy: 0, focus: 0 }); break;
       case 'sleepy': Object.assign(m, { joy: 0, fear: 0, sleepy: 1, focus: 0 }); break;
       case 'curious': Object.assign(m, { joy: 0, fear: 0, sleepy: 0, focus: 0 }); break;
     }
+    this.look(dt, t, body, ptr);
+    this.blink(dt);
+    this.place(dt, body);
   }
 
   private look(dt: number, t: number, body: Body, ptr: Pointer): void {

@@ -4,7 +4,7 @@
 import type { Ball } from '../creature/body';
 import type { Eye } from '../creature/face';
 
-export const MAX_BALLS = 96;
+export const MAX_BALLS = 128;
 
 const VERT = `#version 300 es
 in vec2 aPos;
@@ -31,6 +31,8 @@ uniform float uTime;
 uniform vec4 uEyeA[2]; // x, y, rx, ry (css px)
 uniform vec4 uEyeB[2]; // tilt, open, happy, lid
 uniform vec2 uEyeC[2]; // lidTilt, side
+uniform vec4 uPrey;    // swallowed cursor: x, y, radius, alpha
+uniform vec4 uSpike;   // spikes: body centre xy, body radius, amount
 
 out vec4 outColor;
 
@@ -38,6 +40,51 @@ const vec3 INK = vec3(0.028, 0.028, 0.036);
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Distance to a cone with rounded ends: radius r1 at a, r2 at b.
+float sdRoundCone(vec2 p, vec2 a, vec2 b, float r1, float r2) {
+  vec2 ba = b - a;
+  float l2 = dot(ba, ba);
+  float rr = r1 - r2;
+  float a2 = l2 - rr * rr;
+  float il2 = 1.0 / l2;
+  vec2 pa = p - a;
+  float y = dot(pa, ba);
+  float z = y - l2;
+  vec2 xv = pa * l2 - ba * y;
+  float x2 = dot(xv, xv);
+  float y2 = y * y * l2;
+  float z2 = z * z * l2;
+  float k = sign(rr) * rr * rr * x2;
+  if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
+  if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
+  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+}
+
+// Startle spikes: sharp cones fanning out of the upper body. Each adds a
+// field that is 1 on its surface and fades out just beyond, so the cones
+// fuse into the goo with a soft fillet.
+void addSpikes(vec2 p, inout float f, inout vec2 g) {
+  float amt = uSpike.w;
+  if (amt < 0.01) return;
+  float R = uSpike.z;
+  float w = R * 0.18;
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i);
+    float ang = 3.14159 + (fi + 0.5) * (3.14159 / 7.0) + sin(uTime * 9.0 + fi) * 0.04;
+    vec2 dir = vec2(cos(ang), sin(ang) * 0.9);
+    float len = R * (0.9 + 0.45 * fract(fi * 0.618)) * amt;
+    vec2 a = uSpike.xy + dir * R * 0.9;
+    vec2 b = a + dir * (len + R * 0.1);
+    float d = sdRoundCone(p, a, b, R * 0.2 * min(1.0, amt * 2.0), 0.6);
+    if (d < w) {
+      f += 1.0 - d / w;
+      vec2 ba = b - a;
+      vec2 q = p - (a + ba * clamp(dot(p - a, ba) / dot(ba, ba), 0.0, 1.0));
+      g -= normalize(q + 1e-4) / w;
+    }
+  }
 }
 
 // Metaball field at p, with its gradient in g. The surface is f = 1.
@@ -64,6 +111,7 @@ float field(vec2 p, out vec2 g) {
   float k = max(0.0, 1.0 - dot(fd, fd) / S);
   f -= uFinger.w * 1.2 * k * k;
   g += uFinger.w * 1.2 * 4.0 * k * fd / S;
+  addSpikes(p, f, g);
   return f;
 }
 
@@ -204,6 +252,11 @@ void main() {
 
   vec3 col = INK + vec3(spec) + vec3(fres) * vec3(0.93, 0.93, 0.95) + vec3(bounce);
 
+  // The swallowed cursor, a white glint carried inside the goo.
+  float pd = length(p - uPrey.xy);
+  float glint = (1.0 - smoothstep(uPrey.z - 0.75, uPrey.z + 0.75, pd)) + 0.35 * exp(-pd * pd / (uPrey.z * uPrey.z * 6.0 + 1e-3));
+  col = mix(col, vec3(0.97), clamp(glint, 0.0, 1.0) * uPrey.w);
+
   // Eyes, painted on the goo (so a dent or a stretch takes them along).
   for (int i = 0; i < 2; i++) {
     vec2 ev = eye(p, uEyeA[i], uEyeB[i], uEyeC[i]);
@@ -229,6 +282,8 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 export interface Frame {
   balls: readonly Ball[];
   eyes: readonly Eye[];
+  prey: { x: number; y: number; r: number; alpha: number };
+  spike: { x: number; y: number; r: number; amount: number };
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   radius: number;
   finger: { x: number; y: number; r: number; strength: number };
@@ -241,7 +296,7 @@ export interface Frame {
 
 const UNIFORMS = [
   'uRes', 'uDpr', 'uCount', 'uBalls', 'uBounds', 'uR', 'uFinger',
-  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC',
+  'uFloor', 'uContact', 'uCamX', 'uZoom', 'uTime', 'uEyeA', 'uEyeB', 'uEyeC', 'uPrey', 'uSpike',
 ] as const;
 
 export class GooRenderer {
@@ -307,6 +362,8 @@ export class GooRenderer {
       this.eyeB.set([e.tilt, e.open, e.happy, e.lid], i * 4);
       this.eyeC.set([e.lidTilt, e.side], i * 2);
     }
+    gl.uniform4f(u.uPrey, f.prey.x, f.prey.y, f.prey.r, f.prey.alpha);
+    gl.uniform4f(u.uSpike, f.spike.x, f.spike.y, f.spike.r, f.spike.amount);
     gl.uniform4fv(u.uEyeA, this.eyeA);
     gl.uniform4fv(u.uEyeB, this.eyeB);
     gl.uniform2fv(u.uEyeC, this.eyeC);
