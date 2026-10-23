@@ -81,14 +81,12 @@ export interface Intent {
   giggle: number;
   /** 0..1: slow, deep sleeping breaths. */
   sleep: number;
-  /** 0..1: reshape into a heart. */
-  heart: number;
 }
 
 export function idleIntent(): Intent {
   return {
     vx: 0, crouch: 0, spikes: 0, reach: null, catchable: false, pounce: 0, hold: 0,
-    hugAt: null, food: null, purr: 0, giggle: 0, sleep: 0, heart: 0,
+    hugAt: null, food: null, purr: 0, giggle: 0, sleep: 0,
   };
 }
 
@@ -171,8 +169,6 @@ export class Body {
   private purr = 0;
   private giggle = 0;
   private sleep = 0;
-  /** 0..1: how far it has become a heart (drawn crisply by the renderer). */
-  heart = 0;
   private budWait = 8;
   private readonly bubble: Ball[] = [];
 
@@ -260,7 +256,6 @@ export class Body {
     this.purr += (intent.purr - this.purr) * ease;
     this.giggle += (intent.giggle - this.giggle) * ease;
     this.sleep += (intent.sleep - this.sleep) * Math.min(1, dt * 2);
-    this.heart += (intent.heart - this.heart) * Math.min(1, dt * 4);
     this.bud(dt, R);
     if (this.stretchT >= 0) {
       this.stretchT += dt;
@@ -300,8 +295,7 @@ export class Body {
     // Rooted while swallowing, or while building a tower.
     if (this.engulf || this.tendril.tower > 0.5) desiredVx *= 0.15;
 
-    // As a heart it floats up a little so the tip clears the floor.
-    let squash = this.crouch * R * 0.5 - this.heart * R * 0.35;
+    let squash = this.crouch * R * 0.5;
     if (ptr.active) {
       const dx = this.hx - ptr.x;
       const dy = this.hy - ptr.y;
@@ -446,20 +440,10 @@ export class Body {
         const ox = p.ox * cs - p.oy * sn;
         const oy = p.ox * sn + p.oy * cs;
         // Gravity settles the shape: a little wider, a little lower.
-        let tx = this.hx + ox * s * wide;
-        let ty = this.hy + oy * s * tall;
-        if (this.heart > 0.01) {
-          // Love: every particle slides to its place on a heart outline
-          // (scaled by how far out it sits), tip pointing at the floor.
-          const th = p.angle;
-          const d = (Math.hypot(p.ox, p.oy) / 0.6) * R * 1.35 * breath;
-          const hx = Math.sin(th) ** 3;
-          const hy = -(13 * Math.cos(th) - 5 * Math.cos(2 * th) - 2 * Math.cos(3 * th) - Math.cos(4 * th)) / 16 - 0.35;
-          tx += (this.hx + hx * d - tx) * this.heart;
-          ty += (this.hy + hy * d - ty) * this.heart;
-        }
+        const tx = this.hx + ox * s * wide;
+        const ty = this.hy + oy * s * tall;
         ax = (tx - p.x) * p.k;
-        ay = (ty - p.y) * p.k + SAG * R * (1 - st * 0.6) * (1 - 0.8 * this.heart);
+        ay = (ty - p.y) * p.k + SAG * R * (1 - st * 0.6);
       }
 
       // Pointer pokes push the goo aside and drag it along.

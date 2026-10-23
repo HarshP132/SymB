@@ -34,7 +34,7 @@ A hidden **Bond** value from 0 to 100 drives five stages. Movement and expressio
 | **2. Curious** | 15–35 | Follows from a distance and tilts its eyes to watch you. Pokes at the cursor, and is easily startled but recovers fast. | A quick poke-and-retreat. |
 | **3. Playful** | 35–60 | Actively chases you, crouches before it pounces, overshoots and tumbles. Plays tag: if you chase it, it runs off giggling (jiggling). | A real pounce. You can dodge it. |
 | **4. Friendly** | 60–85 | Stays close and orbits your cursor. Wraps around it when caught, rubs against it and "purrs" (vibrating ripple). | Envelops the cursor in a little hug. |
-| **5. Super Friendly** | 85–100 | Greets you excitedly when you return and searches for you when you leave. Forms a heart shape, uses several tendrils at once, and naps curled around your cursor. | Joyful, multi-tendril hug-squish. |
+| **5. Super Friendly** | 85–100 | Greets you excitedly when you return and searches for you when you leave. Bounces with joy, uses several tendrils at once, and naps curled around your cursor. | Joyful, multi-tendril hug-squish. |
 
 **What builds Bond:** time spent together, catches, petting, feeding, and holding still near it while it's shy.
 **What lowers it slightly:** rapid aggressive flicking, or long neglect. The decay is small and it never drops more than half a stage, so it stays forgiving.
@@ -158,7 +158,7 @@ Each milestone ends with something you can open in a browser and react to before
 | **M3** ✅ | The Face | Eyes with blinking, look-at-cursor, squash, and an expression set (curious, happy, scared, sleepy). | S |
 | **M4** ✅ | The Brain | Emotions + bond + 5 stages. Shy hiding/fleeing, stillness trust, pounce, orbit, startle spikes. Debug panel with a bond slider to preview every stage. *Checkpoint: personality review.* | L |
 | **M5** ✅ | Living with it | Petting, tickle, feeding by click, hug, sleep/wake, leave/return greetings, persistence. | M |
-| **M6** ✅ | Delight pass | Budding droplets, heart shape, stage-transition "moments", procedural audio, touch support. | M |
+| **M6** ✅ | Delight pass | Budding droplets, stage-transition "moments", procedural audio, touch support. | M |
 | **M7** | Polish & ship | Tuning pacing/feel, performance on mobile, reduced motion, WebGL fallback, final deploy. | S |
 
 **Riskiest part first:** M1 (goo rendering) and M4 (believable personality) carry most of the "immersive" risk, so each gets an explicit review checkpoint.

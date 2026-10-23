@@ -84,8 +84,6 @@ export class Brain {
   private touching = false;
   private asleep = false;
   private moment: { stage: number; left: number } | null = null;
-  private heartTime = 0;
-  private bliss = 0;
   // Where and when the cursor was last seen, for waiting by the door.
   private lastSeen = { x: 0, y: 0 };
   private leftAt = 0;
@@ -135,7 +133,6 @@ export class Brain {
     this.mood.joy = 1;
     this.bond = Math.min(100, this.bond + BOND_PER_CATCH);
     this.rest = REST[this.stage];
-    if (this.stage === 4) this.heartTime = 2.2;
     if (this.stage === 0) {
       // Thrilled and terrified at its own daring: dart back to safety.
       this.flee = 1.4;
@@ -153,7 +150,6 @@ export class Brain {
     this.hopWait = Math.max(0, this.hopWait - dt);
     this.greet = Math.max(0, this.greet - dt);
     this.tickle = Math.max(0, this.tickle - dt);
-    this.heartTime = Math.max(0, this.heartTime - dt);
     this.checkMilestone();
     if (this.moment && ptr.active) {
       this.moment.left -= dt;
@@ -274,12 +270,6 @@ export class Brain {
     const bliss = petted || this.hugging ? 1 : 0;
     m.content += (bliss - m.content) * Math.min(1, dt * (bliss ? 1.5 : 1));
     if (petted) this.bond += (dt * BOND_PER_MIN_PETTING) / 60;
-    // A super friendly SymB petted long enough melts into a heart.
-    this.bliss = st === 4 && m.content > 0.95 ? this.bliss + dt : 0;
-    if (this.bliss > 4) {
-      this.bliss = 0;
-      this.heartTime = 2.5;
-    }
     if (this.hugging) this.bond += (dt * BOND_PER_MIN_HUGGING) / 60;
     this.bond = Math.max(0, Math.min(100, this.bond));
     if (m.content > 0.5) m.fear *= Math.exp(-dt * 3);
@@ -310,7 +300,6 @@ export class Brain {
     it.purr = m.content;
     it.giggle = this.tickle > 0 ? 1 : 0;
     it.sleep = m.sleepy > 0.8 ? 1 : 0;
-    it.heart = this.heartTime > 0 || this.moment?.stage === 4 ? 1 : 0;
     this.lookAt = null;
     this.choose(t, body, ptr, stillFor, pantry);
     // Sleepy heads sink low.
@@ -495,12 +484,12 @@ export class Brain {
         this.mood.joy = 1;
         break;
       case 4:
-        // Super friendly: a heart, and a bounce of joy.
+        // Super friendly: big, bouncing, can't-stop-smiling joy.
         this.mood.joy = 1;
         it.vx = toward(R * 2.2, 0.5);
         if (body.grounded && this.hopWait === 0) {
-          it.pounce = R * 0.5;
-          this.hopWait = 0.8;
+          it.pounce = R * 1.3;
+          this.hopWait = 0.6;
         }
         break;
     }
